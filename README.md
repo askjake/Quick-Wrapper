@@ -1,6 +1,6 @@
 # Quick-Wrapper — AQ-MCP Connector Wizard v0.3
 
-**Windows desktop wizard for deploying and verifying MCP connectors through a trusted Linux SSH gateway.** v0.3 is now the version intended to live in this repository; the sections below describe the code in this checkout. It supports gateway inspection / create-only bootstrap, real Lambda/Git/local MCP backend verification, tool selection, automatic deployment plans, guarded Lambda registry changes and a manual Amazon Quick registration walkthrough.
+**Desktop wizard for deploying and verifying MCP connectors through a trusted Linux SSH gateway.** v0.3 is now the version intended to live in this repository; the sections below describe the code in this checkout. It supports gateway inspection / create-only bootstrap, real Lambda/Git/local MCP backend verification, tool selection, automatic deployment plans, guarded Lambda registry changes and a manual Amazon Quick registration walkthrough.
 
 > **Release scope:** Engineering candidate, not production-certified. It was tested against a Windows workstation / Linux gateway workflow, but clean-host bootstrap, Quick UI registration and every downstream MCP tool have not been independently certified. Registration is still manual, and the wizard does **not** write Quick's DIPS database. Git and local backends are **existing-target registration only**.
 
@@ -80,7 +80,122 @@ if not exist ".venv\Scripts\python.exe" py -3 -m venv .venv
 
 **CMD note:** execute stepwise and stop if any command fails; unlike the PowerShell blocks above, these reference commands do not automatically abort on failure. Do not run the commands from `C:\Users\<you>` before changing into the repository.
 
-## 3. Five-step wizard workflow
+## 3. Linux workstation — clone, update and launch
+
+**Status:** the client GUI is implemented with tkinter/Paramiko, but Linux desktop acceptance on your own workstation is not yet recorded. The **remote gateway installer is Linux-only**; this section describes installing the *wizard client* on a Linux desktop and connecting it to an approved Linux SSH gateway. A desktop display session is needed for the GUI.
+
+**Prerequisites (Ubuntu/Debian example):**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git python3 python3-venv python3-tk
+python3 --version
+python3 -c 'import tkinter; print("Tk is installed")'
+```
+
+On another distribution, install its equivalent Git, Python 3, venv and tkinter packages. **Python 3.10+ is recommended** for workstation consistency; the Linux *gateway* bootstrap requires 3.10+.
+
+**First-time clone, create `.venv`, test and launch (paste the entire parenthesized block):**
+
+```bash
+(
+  set -e
+  repo="$HOME/Quick-Wrapper"
+  if [ -e "$repo" ]; then echo "Checkout already exists: $repo; use the update block." >&2; exit 1; fi
+  git clone https://github.com/askjake/Quick-Wrapper.git "$repo"
+  cd "$repo"
+  python3 -m venv .venv
+  ./.venv/bin/python -m pip install -r requirements.txt
+  ./.venv/bin/python -m unittest discover -s tests -v
+  ./.venv/bin/python wizard.py
+)
+```
+
+**Update an existing clone safely, reuse `.venv`, test and launch:**
+
+```bash
+(
+  set -e
+  repo="$HOME/Quick-Wrapper"
+  if [ ! -d "$repo/.git" ]; then echo "Checkout missing: $repo; use the clone block." >&2; exit 1; fi
+  cd "$repo"
+  git status --short
+  if [ -n "$(git status --porcelain)" ]; then echo "Local changes found. Review/stash/commit them before updating." >&2; exit 1; fi
+  git switch main
+  git pull --ff-only origin main
+  if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi
+  ./.venv/bin/python -m pip install -r requirements.txt
+  ./.venv/bin/python -m unittest discover -s tests -v
+  ./.venv/bin/python wizard.py
+)
+```
+
+**Launch afterward:**
+
+```bash
+cd "$HOME/Quick-Wrapper"
+./.venv/bin/python wizard.py
+```
+
+Both blocks execute in a subshell and use `set -e`, so a failed clone, pull, dependency installation or test **stops that block** before launch. The update block refuses dirty checkouts; review local changes rather than discarding them. The environment is stored only in `<checkout>/.venv` and is gitignored. Do not use `sudo pip`.
+
+## 4. macOS workstation — clone, update and launch
+
+**Status:** the tkinter-based wizard client has not yet completed a native macOS GUI acceptance run; treat this as an **experimental client** procedure. The selected jump server must still be an approved **Linux** gateway; v0.3 does not bootstrap macOS as the gateway.
+
+**Prerequisites:** install Git and a current Python 3 with **working tkinter/Tcl-Tk** (for example, a suitable python.org macOS Python installer, or a Homebrew Python with the matching `python-tk` package). Ensure the `python3` selected below is the same installation that has tkinter; macOS-provided Python may be too old or lack the right Tk runtime.
+
+```zsh
+git --version
+python3 --version
+python3 -c 'import tkinter; print("Tk is installed")'
+```
+
+**First-time clone, create `.venv`, test and launch (paste the entire parenthesized block):**
+
+```zsh
+(
+  set -e
+  repo="$HOME/Quick-Wrapper"
+  if [ -e "$repo" ]; then echo "Checkout already exists: $repo; use the update block." >&2; exit 1; fi
+  git clone https://github.com/askjake/Quick-Wrapper.git "$repo"
+  cd "$repo"
+  python3 -m venv .venv
+  ./.venv/bin/python -m pip install -r requirements.txt
+  ./.venv/bin/python -m unittest discover -s tests -v
+  ./.venv/bin/python wizard.py
+)
+```
+
+**Update an existing clone safely, reuse `.venv`, test and launch:**
+
+```zsh
+(
+  set -e
+  repo="$HOME/Quick-Wrapper"
+  if [ ! -d "$repo/.git" ]; then echo "Checkout missing: $repo; use the clone block." >&2; exit 1; fi
+  cd "$repo"
+  git status --short
+  if [ -n "$(git status --porcelain)" ]; then echo "Local changes found. Review/stash/commit them before updating." >&2; exit 1; fi
+  git switch main
+  git pull --ff-only origin main
+  if [ ! -x .venv/bin/python ]; then python3 -m venv .venv; fi
+  ./.venv/bin/python -m pip install -r requirements.txt
+  ./.venv/bin/python -m unittest discover -s tests -v
+  ./.venv/bin/python wizard.py
+)
+```
+
+**Launch afterward:**
+
+```zsh
+cd "$HOME/Quick-Wrapper"
+./.venv/bin/python wizard.py
+```
+
+macOS uses `.venv/bin/python`, **not** Windows `.venv\Scripts\python.exe`. You do not need `source .venv/bin/activate` because these instructions invoke the venv interpreter directly. If the native Tk window fails to open, verify Python/Tcl-Tk compatibility and rerun the import check; do not bypass SSH host-key verification. GitHub HTTPS clone avoids requiring a GitHub SSH key; the wizard's SSH-to-gateway connection still requires your pretrusted gateway host key and authorized SSH identity.
+
+## 5. Five-step wizard workflow
 
 1. **SSH Gateway:** enter host, user and trusted `known_hosts`; inspect an existing gateway or explicitly bootstrap a missing approved Linux gateway. Never overwrite an existing `~/aq-mcp`.
 2. **MCP Backend:** select Lambda Function URL (SigV4), existing guarded Git target, or approved local server. Click **Test / Verify Backend** and require `BACKEND_VERIFIED` before continuing.
@@ -102,7 +217,7 @@ if not exist ".venv\Scripts\python.exe" py -3 -m venv .venv
 
 ## Security and operational limits
 
-- Python with tkinter/Tcl-Tk is required on Windows; Paramiko 3.x is installed in the local `.venv`.
+- Python with tkinter/Tcl-Tk is required on the **client** (Windows, Linux or macOS); Paramiko 3.x is installed in its local `.venv`. Linux/macOS native GUI qualification is pending. The **remote gateway** remains Linux-only with Python 3.10+.
 - Unknown/changed SSH keys are refused (`paramiko.RejectPolicy()`); do not disable host-key checks.
 - Bootstrap installs the reviewed **Lambda gateway core** on a missing Linux host with Python 3.10+, an approved package index and separately configured AWS credentials. It does not provision AWS roles, Okta credentials, Docker images, PATs, or server certificates.
 - The gateway's historical proxy treats an empty allow-list as **allow all**. The wizard therefore refuses empty allow-lists for new targets. Do not enable ambiguous export/submit/upload/trigger operations without an explicit review.

@@ -1,3 +1,55 @@
+# Quick-Wrapper — AQ-MCP Connector Wizard v0.4 (engineering candidate)
+
+**No administrator rights or WSL2 required for native localhost.** v0.4 introduces a user-owned gateway on the **same computer running Amazon Quick**, using direct Python/stdin/stdout MCP instead of SSH. Its new Lambda targets keep exact tool allow-lists, backend discovery, SHA-256 registry checks, rollback receipts, and manual Quick connector registration. **Existing Linux SSH gateways are unchanged.** Windows native-local execution has not yet passed a live workstation acceptance run.
+
+**[Native-local operator MOP](NATIVE_LOCAL_MOP.md)** · **[v0.4 release notes](RELEASE_NOTES_v0_4.md)**
+
+## Run v0.4 on Windows — test this feature branch
+
+Use **one entire PowerShell block** from an existing clone (do not paste `else`/`elseif` lines separately). The commands never create a venv in your home directory by accident.
+
+```powershell
+$repo = Join-Path $HOME 'Quick-Wrapper'
+if (-not (Test-Path (Join-Path $repo '.git'))) { throw "Checkout missing: $repo; clone it first." }
+Set-Location -LiteralPath $repo -ErrorAction Stop
+if (git status --porcelain) { throw 'Uncommitted changes: review or commit before switching branches.' }
+
+git fetch origin feature/native-local-gateway-v04-20261019
+if ($LASTEXITCODE -ne 0) { throw 'Git fetch failed' }
+git switch --track origin/feature/native-local-gateway-v04-20261019
+if ($LASTEXITCODE -ne 0) { throw 'Git branch switch failed' }
+
+if (-not (Test-Path .\.venv\Scripts\python.exe)) {
+    py -3 -m venv .venv
+    if ($LASTEXITCODE -ne 0) { throw 'Virtual environment creation failed' }
+}
+& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }
+& .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed; do not deploy' }
+& .\.venv\Scripts\python.exe wizard.py
+```
+
+If the feature branch is already checked out locally, skip the `git switch --track` line and use `git switch feature/native-local-gateway-v04-20261019` followed by `git pull --ff-only origin feature/native-local-gateway-v04-20261019`; do not reset local branch changes. For a first-time clone, `git clone https://github.com/askjake/Quick-Wrapper.git "$HOME\Quick-Wrapper"`, then run the block above. After this branch is merged, switch to `main` and `git pull --ff-only origin main` instead of tracking the feature branch.
+
+## v0.4 workflow — no SSH server needed
+
+1. **Gateway:** On Step 1 select **Native gateway on THIS computer (no SSH/admin)**; inspect and approve **Install missing gateway** only when state is `MISSING`. This creates `$HOME\AQ-MCP-Gateway` with a separate gateway venv and reviewed Lambda proxy sources. Package downloads require access to your approved Python index. An existing or incomplete gateway is **never** overwritten.
+2. **Backend:** Enter an AWS_IAM Lambda Function URL, click **Test / Verify Backend**, and require `BACKEND_VERIFIED` (`initialize` + `tools/list`, no application calls). AWS/Okta credentials must already be available to the local Windows account; the wizard does not provision or copy credentials.
+3. **Policy:** Select an explicit **nonempty** tool allow-list, reviewing mutators and unexpected backend tool identities.
+4. **Plan/deploy:** Review the generated plan, approve only the expected target, require `GATEWAY_VERIFIED`, and save its private rollback receipt. Checksum conflicts stop safely.
+5. **Quick registration:** Add a new **Local** MCP connector in Amazon Quick Desktop and copy the wizard's native settings. Example: `Command = C:\Users\engineer\AQ-MCP-Gateway\venv\Scripts\python.exe`; `Arguments = C:\Users\engineer\AQ-MCP-Gateway\aq_registry.py run rtr-demo`; **Environment variables = EMPTY**. Click **Test connection**, save, open a **new Quick chat**, and verify a harmless read. Quick's undocumented DIPS database is **not** modified.
+
+**Copy/paste into Quick (new in v0.4 feature branch):** After the automatic plan is generated, Step 4 displays **Command** and **Arguments (paste entire line)** as separate read-only fields with **Copy command** / **Copy arguments** buttons. The same controls appear on Step 5, and a successful deployment prints both values in human-readable lines **above** the JSON receipt. Paste only the copied Arguments line into Quick's single Arguments field; it displays the parsed chips. This works for either an SSH launcher (`Command = ssh`) or a native-local Python launcher (`Command = ...\\Scripts\\python.exe`). The environment-variables field stays **EMPTY**. JSON receipts still serve rollback/audit and do not register Quick connectors.
+
+**Loopback with SSH:** `127.0.0.1` already works in the *Linux SSH* mode when the computer running Quick itself has a working Linux SSH server. Native localhost uses direct Python and therefore needs **neither `ssh` nor a listener**.
+
+**Remote native Windows jump server:** **not yet provisioned by v0.4.** A different Windows host requires an already-authorized incoming transport (such as an administrator-provisioned OpenSSH server). The wizard does not open firewall ports, install SSH services, run WSL2, or elevate privileges. Git/Docker target provisioning remains restricted to the existing Linux SSH adapters.
+
+---
+
+## v0.3 Linux SSH and Windows installation documentation (retained)
+
 # Quick-Wrapper — AQ-MCP Connector Wizard v0.3
 
 **Windows desktop wizard for deploying and verifying MCP connectors through a trusted Linux SSH gateway.** v0.3 is now the version intended to live in this repository; the sections below describe the code in this checkout. It supports gateway inspection / create-only bootstrap, real Lambda/Git/local MCP backend verification, tool selection, automatic deployment plans, guarded Lambda registry changes and a manual Amazon Quick registration walkthrough.

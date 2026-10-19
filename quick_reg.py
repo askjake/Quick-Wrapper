@@ -61,7 +61,7 @@ def quick_instructions(spec):
             "   Connection type : Local\n"
             "   ID              : {id}\n"
             "   Name            : {name}\n"
-            "   Command         : ssh\n"
+            "   Command         : {command}\n"
             "   Arguments       : {args}\n"
             "   Environment variables : EMPTY — never enter AWS credentials/PATs.\n"
             "   Timeout (seconds)     : {timeout} (adjust for the tool family)\n\n"
@@ -83,5 +83,5 @@ def quick_instructions(spec):
             "inside Quick. Exported JSON is a reference example, NOT a verified\n"
             "import format. Capture the test result and mark registration verified\n"
             "only after a real Quick chat call succeeds.\n").format(
-                id=cfg['id'],name=cfg['name'],args=args,
+                id=cfg['id'],name=cfg['name'],command=cfg['command'],args=args,
                 timeout=cfg['timeout_seconds'],count=len(cfg['arguments']),chips=chips)

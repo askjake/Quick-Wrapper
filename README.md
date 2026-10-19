@@ -40,6 +40,33 @@ if (-not (Test-Path .\.venv\Scripts\python.exe)) { py -3 -m venv .venv }
 .\.venv\Scripts\python.exe wizard.py
 ```
 
+**Command Prompt (CMD) equivalents** (use these instead of the PowerShell examples above if your prompt starts with `C:\Users\...>`):
+
+First-time clone:
+
+```cmd
+cd /d "%USERPROFILE%\Documents"
+git clone git@github.com:askjake/Quick-Wrapper.git
+cd Quick-Wrapper
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe wizard.py
+```
+
+Existing checkout update:
+
+```cmd
+cd /d "%USERPROFILE%\Documents\Quick-Wrapper"
+git status --short
+git switch main
+git pull --ff-only origin main
+if not exist ".venv\Scripts\python.exe" py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe wizard.py
+```
+
+Do **not** paste `$HOME`-based PowerShell commands into CMD: CMD uses `%USERPROFILE%`. In both shells, inspect `git status --short` first and do not discard unrelated local changes.
 **Run the newer v0.3 ZIP:** Until v0.3 source is merged into `main`, the clone/update commands above run the **checked-in v0.1 code**, not v0.3. For the separately provided v0.3 package, extract it to its own folder and run the following **from the directory containing its `wizard.py`**:
 
 ```powershell

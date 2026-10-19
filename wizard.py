@@ -11,7 +11,7 @@ from deploy_lib import SSHGateway, ConnectorDeployer, DeploymentError
 from native_gateway import NativeGateway
 from model import (validate_gateway, validate_spec, ValidationError, quick_connector,
                    config_export, backend_identity, risk_tool_names)
-from quick_reg import quick_instructions, write_quick_config, inspect_dips_read_only
+from quick_reg import quick_instructions, write_quick_config, inspect_dips_read_only, quick_copy_fields
 
 BG='#101826'
 PANEL='#1B2738'
@@ -232,6 +232,33 @@ class Wizard(tk.Tk):
         if self.backend_verification:
             for warning in self.backend_verification.get('warnings',[]):self.helper(self.body,'WARNING: '+warning)
 
+    def show_quick_copy_fields(self, parent, connector):
+        """Expose Quick Command and Arguments separately, with copy buttons."""
+        for child in parent.winfo_children():
+            child.destroy()
+        if not connector:
+            ttk.Label(parent, text='Quick Command / Arguments appear here after plan generation.',
+                      style='Muted.TLabel').pack(anchor='w')
+            return
+        try:
+            values=quick_copy_fields(connector)
+        except ValueError as exc:
+            ttk.Label(parent, text='Cannot format Quick settings: '+str(exc),
+                      style='Muted.TLabel').pack(anchor='w')
+            return
+        ttk.Label(parent, text='COPY INTO AMAZON QUICK (Local connector)',
+                  style='Muted.TLabel').pack(anchor='w', pady=(3,4))
+        for label,key in [('Command','command'),('Arguments (paste entire line)','arguments')]:
+            ttk.Label(parent,text=label).pack(anchor='w',pady=(5,2))
+            row=ttk.Frame(parent);row.pack(fill='x')
+            field=ttk.Entry(row)
+            field.insert(0,values[key]);field.configure(state='readonly')
+            field.pack(side='left',fill='x',expand=True)
+            ttk.Button(row,text='Copy '+('command' if key=='command' else 'arguments'),
+                       command=lambda value=values[key]:self.copy_text(value)).pack(side='left',padx=(8,0))
+        self.helper(parent,'Quick ID: {}  |  Name: {}  |  Timeout: {} s  |  Environment: EMPTY'.format(
+                    values['id'],values['name'],values['timeout_seconds']))
+
     def render_review(self):
         ttk.Label(self.body,text='04  Plan, deploy and verify',style='Heading.TLabel').pack(anchor='w')
         self.helper(self.body,'The verified backend and selected tools produce a plan automatically. The live registry is checked before approval; Apply is locked until planning finishes.')
@@ -240,6 +267,8 @@ class Wizard(tk.Tk):
         ttk.Button(controls,text='Deploy approved plan',command=self.deploy_action).pack(side='left',padx=(0,10))
         ttk.Button(controls,text='Rollback last deployment',command=self.rollback_action).pack(side='left',padx=(0,10))
         ttk.Button(controls,text='Save receipt',command=self.save_receipt_action).pack(side='left')
+        self.quick_copy_area=ttk.Frame(self.body);self.quick_copy_area.pack(fill='x',pady=(6,10))
+        self.show_quick_copy_fields(self.quick_copy_area, (self.prepared or {}).get('quick_connector'))
         self.plan_view=self.text_area(self.body,16)
         if self.prepared:self.plan_view.insert('1.0',json.dumps(self.prepared,indent=2))
         else:self.plan_view.insert('1.0','Generating a deployment plan automatically from verified backend and selected tools...')
@@ -250,6 +279,9 @@ class Wizard(tk.Tk):
         self.helper(self.body,'Gateway deployment and Quick Desktop registration are separate steps. Native-local uses direct Python (no SSH); Linux SSH uses ssh. This version NEVER writes to DIPS.')
         try:msg=quick_instructions(self.spec())
         except Exception as e:msg='Complete prior steps: '+str(e)
+        self.quick_copy_area=ttk.Frame(self.body);self.quick_copy_area.pack(fill='x',pady=(5,10))
+        try:self.show_quick_copy_fields(self.quick_copy_area,quick_connector(self.spec()))
+        except Exception:self.show_quick_copy_fields(self.quick_copy_area,None)
         self.manual=self.text_area(self.body,12)
         self.manual.insert('1.0',msg)
         controls=ttk.Frame(self.body);controls.pack(fill='x',pady=12)
@@ -376,6 +408,7 @@ class Wizard(tk.Tk):
                 'offered_tool_count':self.backend_verification['tool_count'],
                 'offered_name_sha256':__import__('hashlib').sha256(','.join(sorted(x['name'] for x in self.backend_verification['tools'])).encode()).hexdigest()}
             self.prepared=result
+            self.show_quick_copy_fields(self.quick_copy_area,result.get('quick_connector'))
             self.plan_view.delete('1.0','end');self.plan_view.insert('1.0',json.dumps(result,indent=2))
         self.action(lambda:ConnectorDeployer(self.gateway()).prepare(spec),done)
 
@@ -403,8 +436,12 @@ class Wizard(tk.Tk):
         def done(ok,result):
             if not ok:messagebox.showerror('Deployment failed',result);return
             self.last_receipt=result;self.last_gateway=gw
-            self.plan_view.delete('1.0','end');self.plan_view.insert('1.0',json.dumps(result,indent=2))
-            messagebox.showinfo('Gateway result',result['status']+'\nQuick registration remains manual.')
+            connector=result.get('quick_connector') or prepared.get('quick_connector')
+            self.show_quick_copy_fields(self.quick_copy_area,connector)
+            fields=quick_copy_fields(connector)
+            paste='QUICK COMMAND (COPY/PASTE):\n'+fields['command']+'\n\nQUICK ARGUMENTS (PASTE ENTIRE LINE):\n'+fields['arguments']+'\n\n'
+            self.plan_view.delete('1.0','end');self.plan_view.insert('1.0',paste+json.dumps(result,indent=2))
+            messagebox.showinfo('Gateway result',result['status']+'\n\nQuick Command and Arguments are available above the receipt, with separate Copy buttons.\nQuick registration remains manual.')
         self.action(lambda:ConnectorDeployer(gw).deploy(spec,prepared,True),done)
 
     def save_receipt_action(self):

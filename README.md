@@ -4,16 +4,66 @@
 
 > **Version check (important):** The repository currently tracks the **v0.1** wizard source. The updated five-step workflow documented first below applies to the separately supplied **v0.3** distribution (`AQ_MCP_Connector_Wizard_v0_3.zip`), which has been exercised on a Windows test workstation and gateway. **v0.3 source has not yet been promoted into this GitHub repository.** Cloning this repo alone does **not** install v0.3. Do not use the v0.1 checkout to qualify a fresh Windows install: it has a known POSIX `fcntl` test-import problem and lacks the newer gateway bootstrap and backend-verification flow.
 
+## Clone or update the repository (Windows PowerShell)
+
+Use an **isolated project-local virtual environment** (`.venv`) to avoid modifying another Python installation or its Paramiko version. These examples assume you want the checkout under `Documents`; choose a different local folder if needed. Run the commands in **PowerShell**, not CMD.
+
+**First-time clone (SSH):**
+
+```powershell
+cd "$HOME\Documents"
+git clone git@github.com:askjake/Quick-Wrapper.git
+cd .\Quick-Wrapper
+
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# Launch the code actually checked into this branch/repository.
+.\.venv\Scripts\python.exe wizard.py
+```
+
+The repository is public; if you have not configured GitHub SSH keys, substitute `git clone https://github.com/askjake/Quick-Wrapper.git`. SSH login to GitHub is unrelated to the gateway's own `known_hosts` trust verification.
+
+**Update an existing checkout (fast-forward only):**
+
+```powershell
+cd "$HOME\Documents\Quick-Wrapper"
+git status --short
+# Review and resolve local edits before pulling. Do not discard changes.
+git switch main
+git pull --ff-only origin main
+
+# Reuse the venv; create it only if missing.
+if (-not (Test-Path .\.venv\Scripts\python.exe)) { py -3 -m venv .venv }
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe wizard.py
+```
+
+**Run the newer v0.3 ZIP:** Until v0.3 source is merged into `main`, the clone/update commands above run the **checked-in v0.1 code**, not v0.3. For the separately provided v0.3 package, extract it to its own folder and run the following **from the directory containing its `wizard.py`**:
+
+```powershell
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe wizard.py
+```
+
+A v0.1 Windows test run is known to fail when Linux-only `fcntl` is imported. **Use the v0.3 package for the tested backend-verification, bootstrap and automatic-plan workflow.** The commands above intentionally use `.venv\Scripts\python.exe` directly; no shell activation is required. If you prefer to activate it in PowerShell, use `.\.venv\Scripts\Activate.ps1` where permitted by your organization's script policy (do not weaken execution policy just to run the wizard).
+
 ## 1. Install and launch the wizard on Windows (v0.3)
 
 1. Obtain the reviewed **`AQ_MCP_Connector_Wizard_v0_3.zip`** package from the project handoff. Until the v0.3 source is published to this repository or a verified GitHub release, use that package—not the current repository checkout.
 2. Extract to a **new** directory. Open PowerShell or Command Prompt **in the directory containing `wizard.py` and `requirements.txt`**. Do not overwrite an open v0.1/v0.2 installation.
 3. Install the local dependency, run tests, then launch:
 
-   ```cmd
-   py -3 -m pip install -r requirements.txt
-   py -3 -m unittest discover -s tests -v
-   py -3 wizard.py
+   ```powershell
+   py -3 -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install --upgrade pip
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+   .\.venv\Scripts\python.exe wizard.py
    ```
 
    Python with tkinter/Tcl-Tk is required; Paramiko is installed from `requirements.txt`. POSIX-only integration fixtures may be skipped on Windows. Stop if tests fail. A historical successful Linux test run is **41/41**, not proof that every Windows/gateway combination is qualified.
@@ -116,13 +166,15 @@ A runnable **Windows desktop wizard** for onboarding MCP targets to the **existi
 1. Install Python 3.8+ from python.org with tkinter/Tcl/Tk. Recommended Python 3.11 or 3.12.
 2. In **PowerShell or CMD**, unzip this package to your chosen folder and run:
 
-   ```cmd
-   py -3 -m pip install -r requirements.txt
-   py -3 -m unittest discover -s tests -v
-   py -3 wizard.py
+   ```powershell
+   py -3 -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install --upgrade pip
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+   .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+   .\.venv\Scripts\python.exe wizard.py
    ```
 
-   Or double-click `start_wizard.bat` after installing the dependency. No admin rights are required.
+   Or double-click `start_wizard.bat` after creating `.venv` and installing dependencies. It uses the local interpreter. No admin rights are required.
 3. Connect to your approved SSH server using OpenSSH **after verifying its host fingerprint out of band**. Ensure that its verified key is in your own `~/.ssh/known_hosts`. The wizard uses `paramiko.RejectPolicy()`, refuses unknown/changed host keys and accepts SSH public-key/agent authentication only.
 4. Your Linux host should already have `~/aq-mcp/targets.json`, `aq_registry.py`, `aq-run.sh`, `aq_mcp_stdio.py`, `aq_check.py`, and `venv/bin/python` from your reviewed gateway install. No `sudo`, no modifying JakeBot, no generic remote commands.
 
@@ -147,17 +199,17 @@ The installed Quick Desktop's `DIPS` database is **not a supported, verified reg
 ## CLI for reproducible operator runs
 
 ```cmd
-py -3 cli.py export templates/example_lambda_manifest.json --output-file connector-example.json
-py -3 cli.py inspect templates/example_lambda_manifest.json
-py -3 cli.py discover templates/example_lambda_manifest.json
-py -3 cli.py plan templates/example_lambda_manifest.json --plan-file approved-plan.json
-py -3 cli.py apply templates/example_lambda_manifest.json --plan-file approved-plan.json --approve-target demo-epg --receipt-file applied-receipt.json
+.\.venv\Scripts\python.exe cli.py export templates/example_lambda_manifest.json --output-file connector-example.json
+.\.venv\Scripts\python.exe cli.py inspect templates/example_lambda_manifest.json
+.\.venv\Scripts\python.exe cli.py discover templates/example_lambda_manifest.json
+.\.venv\Scripts\python.exe cli.py plan templates/example_lambda_manifest.json --plan-file approved-plan.json
+.\.venv\Scripts\python.exe cli.py apply templates/example_lambda_manifest.json --plan-file approved-plan.json --approve-target demo-epg --receipt-file applied-receipt.json
 ```
 
 The manifest, plan and receipt have **no secret tokens** but contain internal hostnames and URLs: handle them as internal-only files. Plan and receipt exports refuse to overwrite existing files. Never run `apply` until you have inspected your plan. A known-good rollback command after approval is:
 
 ```cmd
-py -3 cli.py rollback --receipt-file applied-receipt.json --host trusted-jump.example.internal --user engineer --approve-target demo-epg
+.\.venv\Scripts\python.exe cli.py rollback --receipt-file applied-receipt.json --host trusted-jump.example.internal --user engineer --approve-target demo-epg
 ```
 
 Rollback works only if no other registry edit has occurred since that deployment. It restores the exact saved bytes and does not touch Quick's manually registered connector (remove it yourself if rolling back).

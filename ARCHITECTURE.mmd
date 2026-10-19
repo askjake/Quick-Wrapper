@@ -1,0 +1,18 @@
+flowchart TD
+  UI[Windows Tkinter Wizard] --> V[Validate URL / target / policies]
+  V --> P[SSH with trusted host keys - RejectPolicy]
+  P --> INS[Read live targets.json and SHA-256]
+  INS --> D[MCP initialize + tools/list on 3090]
+  D --> S[Engineer selects explicit allowed tools]
+  S --> REV[Preview manifest and expected base hash]
+  REV -->|Explicit approval| APPLY[Atomic new-target registry insert]
+  APPLY --> CHECK[aq_check.py filtered tools/list]
+  CHECK -->|Failed| RB[CAS-bound rollback from private backup]
+  CHECK -->|Passed| READY[Gateway verified]
+  READY --> MANUAL[Generate Quick Local SSH command and chips]
+  MANUAL --> QUICK[User manually saves connector in Quick]
+  QUICK --> FRESH[New chat / verify safe read]
+  INS --> EXIST[Existing Git / Local target]
+  EXIST --> VALID[Preflight existing launcher]
+  VALID --> MANUAL
+  DIPS[(Quick DIPS SQLite)] -. Read-only schema inspection only .-> UI

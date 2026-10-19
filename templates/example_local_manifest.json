@@ -1,0 +1,7 @@
+{
+  "host": "trusted-jump.example.internal",
+  "user": "engineer",
+  "kind": "local",
+  "target": "build-artifacts",
+  "display_name": "Build Artifacts"
+}

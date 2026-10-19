@@ -1,0 +1,9 @@
+{
+  "host": "trusted-jump.example.internal",
+  "user": "engineer",
+  "kind": "lambda",
+  "target": "demo-epg",
+  "display_name": "Demo EPG MCP",
+  "url": "https://example123.lambda-url.us-west-2.on.aws/mcp",
+  "allow": ["get_genre_distribution"]
+}

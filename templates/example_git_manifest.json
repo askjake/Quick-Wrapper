@@ -1,0 +1,7 @@
+{
+  "host": "trusted-jump.example.internal",
+  "user": "engineer",
+  "kind": "git",
+  "target": "github-ghes",
+  "display_name": "GitHub Enterprise"
+}

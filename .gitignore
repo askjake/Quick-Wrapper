@@ -1,0 +1,7 @@
+# Per-developer Python virtual environment and temporary files
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.env

@@ -44,11 +44,44 @@ def register_quick_automatically(*args, **kwargs):
 
 
 def quick_instructions(spec):
+    """Human-executable setup steps grounded in observed Quick Edit MCP UI.
+
+    This is manual UI registration, not a DIPS mutation or import contract.
+    """
     cfg=quick_connector(spec)
-    return ('Open Quick > Customize > Connectors > Create/Add MCP (UI label may vary).\n'
-            'Connection type: Local\nID: {id}\nName: {name}\nCommand: ssh\n'
-            'Arguments (single field, shown as chips):\n{args}\n'
-            'Environment variables: EMPTY (never paste secrets)\n'
-            'Save, then open a NEW Quick chat and verify one safe read.\n'
-            'Review every action permission. Quick auto-registration has NOT occurred.').format(
-                id=cfg['id'],name=cfg['name'],args=' '.join(cfg['arguments']))
+    args=' '.join(cfg['arguments'])
+    chips='\n'.join('    {}. {}'.format(i+1, value) for i,value in enumerate(cfg['arguments']))
+    return ("AMAZON QUICK — MANUAL LOCAL MCP CONNECTOR SETUP\n"
+            "================================================\n"
+            "Prerequisite: gateway was inspected and backend passed MCP tools/list.\n"
+            "The gateway write and Quick registration are TWO separate operations.\n\n"
+            "1. Open Amazon Quick Desktop. Go to Customize > Connectors.\n"
+            "2. Open Create/Add MCP (exact label may vary by Quick version).\n"
+            "3. Set these fields in the Edit MCP form:\n"
+            "   Connection type : Local\n"
+            "   ID              : {id}\n"
+            "   Name            : {name}\n"
+            "   Command         : ssh\n"
+            "   Arguments       : {args}\n"
+            "   Environment variables : EMPTY — never enter AWS credentials/PATs.\n"
+            "   Timeout (seconds)     : {timeout} (adjust for the tool family)\n\n"
+            "   The Arguments field is ONE input; Quick displays parsed chips.\n"
+            "   Expected {count} argument chips:\n{chips}\n\n"
+            "4. Click Test connection (if offered). Diagnose any failure before saving.\n"
+            "5. Click Save changes. If updating a connector, Edit > Save relaunches\n"
+            "   its process in the observed Quick build; a toggle alone may not.\n"
+            "6. Open a NEW Quick chat so that the model sees the refreshed tool list.\n"
+            "7. Request a safe read-only tool or inspect tools/list. Check it returns\n"
+            "   data from the intended backend; a different tool family is a red flag.\n"
+            "8. Review per-tool Quick permissions: keep mutations Ask each time\n"
+            "   or Always deny unless explicitly approved. The gateway allow-list\n"
+            "   is a separate permission layer.\n\n"
+            "   Example prompt: Using the {name} connector, list your available\n"
+            "   tools and perform one harmless read-only query. Do not modify data.\n\n"
+            "NOTICE: This wizard does not modify Quick's undocumented DIPS DB,\n"
+            "register a connector, grant permissions, or prove tool execution\n"
+            "inside Quick. Exported JSON is a reference example, NOT a verified\n"
+            "import format. Capture the test result and mark registration verified\n"
+            "only after a real Quick chat call succeeds.\n").format(
+                id=cfg['id'],name=cfg['name'],args=args,
+                timeout=cfg['timeout_seconds'],count=len(cfg['arguments']),chips=chips)

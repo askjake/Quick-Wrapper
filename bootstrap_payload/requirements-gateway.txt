@@ -1,0 +1,4 @@
+# Versions inspected from 2026-10-19 gateway snapshot (not a fully hashed lockfile)
+mcp==2.3.0
+botocore==1.43.113
+httpx2==2.13.1

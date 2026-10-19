@@ -1,49 +1,78 @@
-# Method of Procedure — AQ-MCP Wizard v0.1
+# MOP: AQ-MCP Wizard v0.3 — Validate, provision, deploy, recover
 
-## 0. Scope and change classification
-- **Plan/Discovery**: SSH and MCP `initialize` + `tools/list` only; existing proxy may write operational logs. No registry changes.
-- **Apply**: only `~/aq-mcp/targets.json` and a backup/lock under `~/aq-mcp`; only a **new Lambda target**.
-- **Existing Git/Local**: checks and Quick registration instructions only. Does not change any registry entry or token.
-- **Quick desktop**: manual registration; no writes to DIPS.
+**Change control:** no production runtime replacement, no Quick database edits, no tokens in manifests, no port/service restart, no write to Git `main`/`master`. No sudo. Pilot first on a disposable Linux account/host before allowing first install on any shared enterprise jump server.
 
-## 1. Preflight
-1. Confirm host identity and verify server's SSH host-key fingerprint from an independent approved channel; populate local `known_hosts`. Do not disable host-key checking.
-2. Check the gateway already works: `~/aq-mcp/venv/bin/python ~/aq-mcp/aq_registry.py list`. Do not expose tokens.
-3. Refresh AWS credentials on the gateway if the existing Okta-backed credential chain has expired.
-4. Make sure the Lambda URL is exact and belongs to the intended AWS account/region (account ownership is an operator decision; URL syntax alone cannot verify ownership).
-5. Identify tools that are read-only vs. potentially mutating by inspecting descriptions/schemas with their owners. Do not trust names/annotations alone.
-6. Do not operate concurrently with another editor of the same registry target. The wizard uses a CAS hash to refuse stale updates, but external writers not using its lock can still race at the file level.
+## 0. Preconditions / evidence
 
-## 2. Deploy a Lambda target (GUI)
-1. Launch `py -3 wizard.py`.
-2. **Gateway**: supply SSH host, user, known_hosts; click `Test SSH / inspect gateway`. Verify existing target list and checksum.
-3. **Backend**: Lambda URL, an unused lowercase target name, and a Quick display name.
-4. **Tools**: click `Discover`, select a reviewed subset. No tool call is executed, and all selected names are re-discovered before apply.
-5. **Review**: generate plan, verify SHA and target entry, click Deploy and approve. The wizard atomically adds the entry and runs `aq_check.py` to verify initialization and filtered tool list.
-6. **Quick**: copy suggested arguments, create a Local MCP connector, leave Environment Variables empty, save, open a fresh Quick chat, test a read-only MCP call.
-7. **Evidence**: capture target name, registry before/after SHA, backup filename, read-only health outcome, and a screenshot of Quick tool discovery (sanitize personal connection details).
+- Windows workstation with `py -3`, tkinter, Paramiko >=3.4<4, trusted SSH host key and key/agent authentication.
+- Linux jump server with SSH access for an owned home directory. Fresh install requires Linux Python >=3.10, `python3 -m venv`, pip and network access to an approved dependency repository.
+- Approved Lambda Function URL and a valid AWS identity already established on gateway (credentials never shipped from installer).
+- Separate review/approval for changes to existing access modes. If other engineers rely on group write to `~/aq-mcp`, coordinate before repairing permissions.
 
-## 3. Failure and rollback
-- SSH unknown/changed key: **STOP** and verify out-of-band. Never AutoAdd.
-- Invalid Lambda URL or zero selected tools: **STOP**; no remote change.
-- Stale registry hash / duplicate target: **STOP**; re-inspect and replan.
-- MCP discovery failure: **STOP**; look for expired AWS credentials or upstream service issue.
-- Health check failure after write: wizard attempts immediate CAS-protected rollback. If registry changed again, it refuses rollback; operator must reconcile current state manually.
-- Quick registration did not appear: check connector's saved command and arguments; edit and save to relaunch and start a new chat. Do not edit Quick's SQLite store manually.
-- Manual rollback: use latest receipt with the exact target; it restores only if the installed registry SHA still matches the deployment receipt.
+## 1. Safe inspection on existing 3090
 
-## 4. Acceptance checklist
-- 21+ local unit tests pass.
-- Windows UI launches without import errors; Paramiko from Python environment is present.
-- Authorized SSH key and host-key verification pass; unknown host is refused.
-- Target discovery returns exact names and selected subset filters correctly.
-- Dry-run makes **no registry writes**.
-- Apply to a sandbox Lambda and observe `GATEWAY_VERIFIED`.
-- Simulated tool/credential failure triggers correct rollback; parallel registry edit triggers conflict and does not overwrite.
-- Quick connector is added **manually**, a fresh chat lists the selected tools, and one benign read call succeeds.
-- Verify no secrets were written to Quick, files, logs or export.
+Open v0.2 UI, enter jump host/user/known-hosts and click **Inspect**.
 
-## 5. Phase 2 (design only)
-A versioned gateway bootstrap installer and automated Quick registration require separate qualification. Never write directly to live undocumented DIPS tables simply because a schema could be inspected. Obtain provider-supported API/import/CLI behavior, connector lifecycle checks and an end-to-end rollback first.
+The supplied gateway archive recorded root directory mode `0775` and core files such as `targets.json` mode `0664`; v0.1 rejected them. v0.2 must report `PERMISSIONS_NEED_REPAIR`, show the individual problematic paths, and **not** write anything. If `INCOMPLETE` or `FOREIGN`, stop rather than bootstrap/repair.
 
-**Rollback receipt:** The GUI can save a deployment receipt on the Review screen. Retain it privately. The CLI can use it after the wizard closes. If the registry changed in parallel, rollback stops rather than reverting someone else's work.
+If changing group write permissions is approved, click **Repair core permissions** and confirm the displayed paths. Expected: permission changes only for the owned gateway directory and 5 core files, then subsequent Inspect reports `READY`. If shared access is required, **do not repair**; define a separate private gateway installation design and change control instead.
+
+## 2. Create a gateway from scratch (fresh disposable Linux host only)
+
+On a host with no `~/aq-mcp`, Inspect must return `MISSING`. Select **Install missing gateway**; acknowledge host package downloads and explicit new-directory creation. The worker receives a curated, SHA-checked ZIP in memory via existing authenticated SSH stdin. It will:
+
+1. Refuse an existing, symlinked, incomplete or foreign `~/aq-mcp`.
+2. Verify bundle digest and exact allowed member names; stage under an owner-private home directory.
+3. Write the four curated launcher/proxy/check sources and initially empty `targets.json`.
+4. Build a staged `venv`; install pinned `mcp`, `botocore`, `httpx2` from the host's configured package index; import-test.
+5. Exclusively create owner-private `~/aq-mcp` then move staged contents without overwriting any existing installation. Files use mode `0600`, launcher mode `0700`, directory mode `0700`.
+6. Report `BOOTSTRAPPED`, then re-inspect for `READY`. It does NOT install credentials, PATs, Docker, or Quick connectors.
+
+Stop on any error and inspect `~/aq-mcp` before retrying. If a failure happens during the final few file moves, the private folder can be `INCOMPLETE` and requires operator reconciliation; do not automatically delete files from the new path.
+
+**Acceptance on fresh host:** `~/aq-mcp/venv/bin/python -c "import mcp,botocore,httpx2"`, `~/aq-mcp/venv/bin/python ~/aq-mcp/aq_registry.py list`, and a `tools/list` check after the first Lambda target and valid AWS identity are present.
+
+## 3. Add a Lambda MCP target
+
+Pick Lambda backend, enter `https://<id>.lambda-url.<region>.on.aws[/mcp]`, discover tools, select the exact allow-listed names (nonempty), review and approve. The deployed registry entry resembles:
+
+```json
+{
+  "url": "https://example123.lambda-url.us-west-2.on.aws/mcp",
+  "region": "us-west-2",
+  "env": "wizard",
+  "note": "Installed by AQ-MCP Connector Wizard",
+  "allow": ["get_programs", "list_genres"]
+}
+```
+
+No tools/call is sent by discovery. New target names cannot replace existing targets. A registry SHA mismatch aborts; re-plan before retrying. Post-apply `aq_check` must show `OK` and exactly the selected number of exposed tools. The target is rolled back on health failure if the registry has not changed again.
+
+## 4. Register in Amazon Quick
+
+Use the generated Local connector settings. For Lambda and approved existing local targets, use `ssh` with `-T`, `-q`, user@host, `/home/<user>/aq-mcp/aq-run.sh`, target-name (UI may display five chips). For guarded existing Git, use venv python, `aq_git_run.py`, target-name (six chips). Keep Quick Environment Variables blank; do not put AWS/Git tokens there. Save connector and open a new chat for current tools. Quick DIPS is read-only inspection only; no automated SQLite mutations are supported.
+
+## 5. Rollback and audit
+
+Save deployment receipt. Use GUI rollback or CLI after identifying exact target and approved gateway:
+
+```cmd
+py -3 cli.py rollback --receipt-file applied-receipt.json --host trusted-jump.example.internal --user engineer --approve-target demo-epg
+```
+
+If rollback reports a conflicting hash, stop and reconcile only the changed registry entry; do not force overwrite someone else's changes. No Quick connector is automatically removed by registry rollback.
+
+## 6. Known gaps / qualification gates
+
+1. Windows tkinter GUI and Paramiko live host-key flow not yet executed as part of this packaging session.
+2. Linux fresh-host package installation and relocated venv runtime not yet validated on a real disposable host; only mocked installation tests passed.
+3. Gateway bootstrap cannot issue AWS identity credentials or open corporate network access. Verify with site security owners.
+4. Git and local adapter provisioning remain out of scope; only existing target registration supported.
+5. Quick local registration requires manual UI until a vendor-supported registration API is verified. SQLite row injection is prohibited.
+6. Version-pinned pip dependencies are not a hash-locked wheelhouse. For production, build an approved offline wheel bundle and signed provenance.
+7. Unit tests: 30 passing on Linux; Windows intentionally skips POSIX-only filesystem/subprocess tests, and should have no import errors. Record exact Windows test output as acceptance evidence.
+
+
+## v0.3 backend and automatic-plan acceptance
+
+Before deploying any selected backend, use **Test / Verify Backend** on Step 2. It must return `BACKEND_VERIFIED` with a positive MCP `tools/list` count. An existing Git/local target needs a successful live metadata handshake, not merely valid configuration. After selecting tools in Step 3, Step 4 builds the plan automatically; compare target name, Lambda URL, selected allow-list and warnings before approval. For existing targets, the plan must be registration-only. Quick registration remains manual and must use the generated one-field SSH Arguments string with empty environment variables. See `ACCEPTANCE_MOP_v0_3.md`.

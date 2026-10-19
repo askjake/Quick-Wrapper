@@ -1,257 +1,195 @@
-# Quick-Wrapper — AQ-MCP Connector Wizard
+# Quick-Wrapper — AQ-MCP Connector Wizard v0.3
 
-**Start here: deploy and verify an MCP connector from Windows.** The wizard connects to a trusted Linux SSH gateway, verifies an MCP backend, discovers offered tools, generates a guarded deployment plan, deploys approved Lambda registry targets, and supplies the exact **Amazon Quick Desktop** connector settings.
+**Windows desktop wizard for deploying and verifying MCP connectors through a trusted Linux SSH gateway.** v0.3 is now the version intended to live in this repository; the sections below describe the code in this checkout. It supports gateway inspection / create-only bootstrap, real Lambda/Git/local MCP backend verification, tool selection, automatic deployment plans, guarded Lambda registry changes and a manual Amazon Quick registration walkthrough.
 
-> **Version check (important):** The repository currently tracks the **v0.1** wizard source. The updated five-step workflow documented first below applies to the separately supplied **v0.3** distribution (`AQ_MCP_Connector_Wizard_v0_3.zip`), which has been exercised on a Windows test workstation and gateway. **v0.3 source has not yet been promoted into this GitHub repository.** Cloning this repo alone does **not** install v0.3. Do not use the v0.1 checkout to qualify a fresh Windows install: it has a known POSIX `fcntl` test-import problem and lacks the newer gateway bootstrap and backend-verification flow.
+> **Release scope:** Engineering candidate, not production-certified. It was tested against a Windows workstation / Linux gateway workflow, but clean-host bootstrap, Quick UI registration and every downstream MCP tool have not been independently certified. Registration is still manual, and the wizard does **not** write Quick's DIPS database. Git and local backends are **existing-target registration only**.
 
-## Clone or update the repository (Windows PowerShell)
+## 1. First-time clone and install on Windows (PowerShell)
 
-Use an **isolated project-local virtual environment** (`.venv`) to avoid modifying another Python installation or its Paramiko version. These examples assume you want the checkout under `Documents`; choose a different local folder if needed. Run the commands in **PowerShell**, not CMD.
-
-**First-time clone (SSH):**
+Use **one complete pasted block**. PowerShell does not accept a separately executed `elseif` after an earlier `if` statement; the flow below avoids that entirely. This example places the checkout at `C:\Users\<you>\Quick-Wrapper` (under `$HOME`), not under Documents or the accidental `$HOME\.venv`.
 
 ```powershell
-cd "$HOME\Documents"
-git clone git@github.com:askjake/Quick-Wrapper.git
-cd .\Quick-Wrapper
-
+$repo = Join-Path $HOME 'Quick-Wrapper'
+if (Test-Path $repo) { throw "Checkout already exists: $repo. Use the update instructions below instead." }
+git clone git@github.com:askjake/Quick-Wrapper.git $repo
+if ($LASTEXITCODE -ne 0) { throw 'Git clone failed; check GitHub SSH access.' }
+Set-Location -LiteralPath $repo -ErrorAction Stop
 py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-
-# Launch the code actually checked into this branch/repository.
-.\.venv\Scripts\python.exe wizard.py
+if ($LASTEXITCODE -ne 0) { throw 'Python virtualenv creation failed.' }
+& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
+& .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+if ($LASTEXITCODE -ne 0) { throw 'Tests failed; do not deploy.' }
+& .\.venv\Scripts\python.exe wizard.py
 ```
 
-The repository is public; if you have not configured GitHub SSH keys, substitute `git clone https://github.com/askjake/Quick-Wrapper.git`. SSH login to GitHub is unrelated to the gateway's own `known_hosts` trust verification.
+If GitHub SSH keys are not configured, replace the `git clone` URL with `https://github.com/askjake/Quick-Wrapper.git`. That GitHub authentication is separate from the SSH host-key verification used by the wizard to connect to the gateway.
 
-**Update an existing checkout (fast-forward only):**
+## 2. Update an existing checkout (PowerShell)
+
+Use **one complete pasted block** from any PowerShell directory. It fails if the expected repository is missing and does not create a virtual environment in your user home by mistake.
 
 ```powershell
-cd "$HOME\Documents\Quick-Wrapper"
+$repo = Join-Path $HOME 'Quick-Wrapper'
+if (-not (Test-Path (Join-Path $repo '.git'))) { throw "Git checkout missing: $repo. Run the first-time clone block above." }
+Set-Location -LiteralPath $repo -ErrorAction Stop
 git status --short
-# Review and resolve local edits before pulling. Do not discard changes.
+# Review any local edits shown above before continuing; do not discard them.
 git switch main
+if ($LASTEXITCODE -ne 0) { throw 'Could not switch to main; review local changes.' }
 git pull --ff-only origin main
-
-# Reuse the venv; create it only if missing.
-if (-not (Test-Path .\.venv\Scripts\python.exe)) { py -3 -m venv .venv }
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe wizard.py
+if ($LASTEXITCODE -ne 0) { throw 'Fast-forward pull failed; do not continue.' }
+if (-not (Test-Path .\.venv\Scripts\python.exe)) {
+    py -3 -m venv .venv
+    if ($LASTEXITCODE -ne 0) { throw 'Virtual environment creation failed.' }
+}
+& .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
+& .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+if ($LASTEXITCODE -ne 0) { throw 'Tests failed; do not deploy.' }
+& .\.venv\Scripts\python.exe wizard.py
 ```
 
-**Command Prompt (CMD) equivalents** (use these instead of the PowerShell examples above if your prompt starts with `C:\Users\...>`):
+The commands deliberately call the interpreter in `.venv` rather than changing PowerShell execution policy to activate it. They do not use your unrelated `C:\Users\<you>\.venv`. To run again later, open PowerShell, `Set-Location "$HOME\Quick-Wrapper"`, and run `& .\.venv\Scripts\python.exe wizard.py`. Alternatively, double-click `start_wizard.bat` once `.venv` exists.
 
-First-time clone:
+### Windows Command Prompt (CMD)
+
+From CMD, use `%USERPROFILE%` rather than PowerShell `$HOME`. First-time clone:
 
 ```cmd
-cd /d "%USERPROFILE%\Documents"
-git clone git@github.com:askjake/Quick-Wrapper.git
-cd Quick-Wrapper
+git clone git@github.com:askjake/Quick-Wrapper.git "%USERPROFILE%\Quick-Wrapper"
+cd /d "%USERPROFILE%\Quick-Wrapper"
 py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe wizard.py
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\Scripts\python.exe wizard.py
 ```
 
 Existing checkout update:
 
 ```cmd
-cd /d "%USERPROFILE%\Documents\Quick-Wrapper"
+cd /d "%USERPROFILE%\Quick-Wrapper"
 git status --short
 git switch main
 git pull --ff-only origin main
 if not exist ".venv\Scripts\python.exe" py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe wizard.py
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+.venv\Scripts\python.exe wizard.py
 ```
 
-Do **not** paste `$HOME`-based PowerShell commands into CMD: CMD uses `%USERPROFILE%`. In both shells, inspect `git status --short` first and do not discard unrelated local changes.
-**Run the newer v0.3 ZIP:** Until v0.3 source is merged into `main`, the clone/update commands above run the **checked-in v0.1 code**, not v0.3. For the separately provided v0.3 package, extract it to its own folder and run the following **from the directory containing its `wizard.py`**:
+**CMD note:** execute stepwise and stop if any command fails; unlike the PowerShell blocks above, these reference commands do not automatically abort on failure. Do not run the commands from `C:\Users\<you>` before changing into the repository.
 
-```powershell
-py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe wizard.py
-```
+## 3. Five-step wizard workflow
 
-A v0.1 Windows test run is known to fail when Linux-only `fcntl` is imported. **Use the v0.3 package for the tested backend-verification, bootstrap and automatic-plan workflow.** The commands above intentionally use `.venv\Scripts\python.exe` directly; no shell activation is required. If you prefer to activate it in PowerShell, use `.\.venv\Scripts\Activate.ps1` where permitted by your organization's script policy (do not weaken execution policy just to run the wizard).
+1. **SSH Gateway:** enter host, user and trusted `known_hosts`; inspect an existing gateway or explicitly bootstrap a missing approved Linux gateway. Never overwrite an existing `~/aq-mcp`.
+2. **MCP Backend:** select Lambda Function URL (SigV4), existing guarded Git target, or approved local server. Click **Test / Verify Backend** and require `BACKEND_VERIFIED` before continuing.
+3. **Tool policy:** discover offered tools, inspect their descriptions/schemas, select an explicit **nonempty allow-list**. Name-based mutator warnings are advisory only.
+4. **Review & Deploy:** the plan is generated automatically with the backend fingerprint, live registry hash, selected tools and approval requirements. For a *new Lambda target only*, deploy and save the receipt; verification failures trigger checksum-bound rollback where safe.
+5. **Amazon Quick registration:** copy the generated Local connector configuration into **Customize → Connectors → Create/Add MCP**, click **Test connection**, save, then use a **new Quick chat** to verify a harmless read. Quick database writes are intentionally unsupported.
 
-## 1. Install and launch the wizard on Windows (v0.3)
+**Manual Quick connector example** (replace placeholders with the values printed by Step 5):
 
-1. Obtain the reviewed **`AQ_MCP_Connector_Wizard_v0_3.zip`** package from the project handoff. Until the v0.3 source is published to this repository or a verified GitHub release, use that package—not the current repository checkout.
-2. Extract to a **new** directory. Open PowerShell or Command Prompt **in the directory containing `wizard.py` and `requirements.txt`**. Do not overwrite an open v0.1/v0.2 installation.
-3. Install the local dependency, run tests, then launch:
-
-   ```powershell
-   py -3 -m venv .venv
-   .\.venv\Scripts\python.exe -m pip install --upgrade pip
-   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-   .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-   .\.venv\Scripts\python.exe wizard.py
-   ```
-
-   Python with tkinter/Tcl-Tk is required; Paramiko is installed from `requirements.txt`. POSIX-only integration fixtures may be skipped on Windows. Stop if tests fail. A historical successful Linux test run is **41/41**, not proof that every Windows/gateway combination is qualified.
-
-The wizard uses `paramiko.RejectPolicy()` and **key/agent-based SSH**, not password fallback. Verify the jump server's host key out of band and put it in the local `known_hosts` file before connecting.
-
-## 2. Inspect or bootstrap the jump-server gateway
-
-On **Step 1 — SSH Gateway**, enter the host, SSH username and known-hosts path, then select **Inspect gateway (read only)**.
-
-| Inspect state | Next action |
+| Field | Value |
 | --- | --- |
-| `READY` | Existing gateway is usable; continue to backend verification. |
-| `MISSING` | On a **new, approved Linux host only**, select **Install missing gateway** and explicitly confirm. |
-| `PERMISSIONS_NEED_REPAIR` | Review the exact owned file list and shared-workflow implications before using **Repair core permissions**. Re-inspect afterward. |
-| `INCOMPLETE`, `FOREIGN`, or `SYMLINK` | Stop. Do not overwrite, recursively chmod or silently replace the installation. |
-
-A fresh install creates an owner-private `~/aq-mcp`, stages the reviewed Lambda gateway sources, sets up the pinned Python environment, validates imports, and refuses to overwrite any existing installation. The host requires **Python 3.10+**, `venv`/`pip`, and access to an approved package index. **Gateway installation is not AWS identity provisioning:** configure authorized AWS/Okta credentials for the SSH user separately; they may expire. The fresh installer does not install Git Docker images, PATs, corporate certificates or Quick connectors.
-
-## 3. Select and verify the MCP backend
-
-On **Step 2 — Backend**, choose one of these supported flows:
-
-| Backend | What v0.3 verifies | Install scope |
-| --- | --- | --- |
-| **AWS Lambda Function URL (SigV4)** | Actual IAM-signed MCP `initialize` + `tools/list` through the gateway; verifies the supplied HTTPS Lambda Function URL and region. | Can create **one new** Lambda registry target. |
-| **Guarded Git MCP** | Metadata handshake through a **pre-existing** `aq_git_run.py`/guard/Docker target. | Existing target **registration only**; no Git runtime or PAT provisioning. |
-| **Approved local MCP** | Metadata handshake through an **existing** allowlisted local target. | Existing target **registration only**; no arbitrary script installation. |
-
-Click **Test / Verify Backend** before continuing. A successful `BACKEND_VERIFIED` means protocol connectivity and offered-tool discovery, **not** that those tools are safe or that any application tool was exercised. Confirm the offered tool names actually match the intended service: an EPG-named connector that discovers RTR Alerts export tools is a wrong-endpoint warning, not successful EPG identification.
-
-## 4. Select tools, review the automatic plan, deploy
-
-On **Step 3 — Tool Policy**, choose the **exact tools** to expose. For Lambda targets an **explicit nonempty allow-list** is mandatory: the underlying gateway can interpret an empty list as “allow all.” The wizard flags potentially mutating names, but that is a **heuristic, not a security verdict**. Inspect names, descriptions and schemas; be especially deliberate with export, submit, upload, trigger and study operations.
-
-Continue to **Step 4 — Review & Deploy**. The wizard **automatically generates a plan** containing the backend identity fingerprint, discovered tools, selected allow-list, live `targets.json` SHA-256, proposed new entry, warnings, and Quick connector command. Verify that the target name, region, URL and selected tools are correct.
-
-For a **new Lambda target only**, select **Deploy approved plan** and explicitly confirm. The gateway rechecks tool discovery and the registry hash, backs up the original registry, adds only the approved target, then runs MCP `initialize`/`tools/list` on that target. If verification fails, it attempts checksum-bound rollback. Save the deployment **receipt** privately for later rollback. Concurrent/unrelated registry changes cause a conflict rather than being overwritten.
-
-For a **matching existing target**, the wizard produces an **existing-target registration-only** plan; a mismatched URL or allow-list must not be silently replaced. Git and local flows remain registration-only.
-
-## 5. Register the connector in Amazon Quick Desktop
-
-**Quick registration is currently manual.** The wizard deliberately does not modify the undocumented `DIPS` SQLite database and has not established a supported Quick registration API.
-
-Open **Amazon Quick Desktop → Customize → Connectors → Create/Add MCP** (labels may vary slightly), then enter the values generated on **Step 5 — Quick Registration**:
-
-| Quick field | Lambda / approved local target |
-| --- | --- |
-| Connection type | **Local** |
-| ID | Generated connector ID, e.g. `aq-my-target` |
-| Name | Chosen display name |
+| Connection type | Local |
 | Command | `ssh` |
-| Arguments | **One space-separated field**, shown as SSH argument chips |
-| Environment variables | **EMPTY** (never paste AWS credentials, PATs or tokens) |
-| Timeout | Use the generated setting, typically 120 seconds |
+| Arguments | `-T -q <ssh-user>@<jump-host> /home/<ssh-user>/aq-mcp/aq-run.sh <target>` |
+| Environment variables | **EMPTY** (never paste tokens) |
+| Timeout | Wizard-generated value (commonly 120 seconds) |
 
-**Lambda/local SSH arguments (example with placeholders):**
+**Do not treat `BACKEND_VERIFIED` or `GATEWAY_VERIFIED` as proof of Quick-side registration.** Verification completes only after a real Quick read. Existing guarded Git uses its separate launcher and is not provisioned from scratch by v0.3.
 
-```text
--T -q <ssh-user>@<jump-host> /home/<ssh-user>/aq-mcp/aq-run.sh <target>
-```
+## Security and operational limits
 
-The UI may show **five chips**: `-T`, `-q`, `user@host`, `aq-run.sh`, `target`. Do not paste the literal placeholder brackets; use the gateway and target reported by the wizard. For an **existing guarded Git** connector the generated command instead runs the approved venv Python plus `aq_git_run.py` and the Git target (six chips). The wrapper is a **local stdio MCP connection tunneled through SSH**, not a Quick-hosted network listener.
+- Python with tkinter/Tcl-Tk is required on Windows; Paramiko 3.x is installed in the local `.venv`.
+- Unknown/changed SSH keys are refused (`paramiko.RejectPolicy()`); do not disable host-key checks.
+- Bootstrap installs the reviewed **Lambda gateway core** on a missing Linux host with Python 3.10+, an approved package index and separately configured AWS credentials. It does not provision AWS roles, Okta credentials, Docker images, PATs, or server certificates.
+- The gateway's historical proxy treats an empty allow-list as **allow all**. The wizard therefore refuses empty allow-lists for new targets. Do not enable ambiguous export/submit/upload/trigger operations without an explicit review.
+- Tool discovery/health verification uses only MCP metadata (`initialize` and `tools/list`), not application tool calls.
+- Deployment protects concurrent edits with a registry SHA-256 check and maintains an exact backup/receipt for safe rollback. Review a plan before approving it.
+- Auto-registration into the undocumented Quick Desktop `DIPS` store is **not implemented or supported**. Use Step 5's manual instructions.
 
-Click **Test connection**, then **Save changes**, open a **new Quick chat**, and run a harmless read from the named connector. Inspect Quick's per-action permission settings independently. A gateway-side `GATEWAY_VERIFIED` receipt does **not** prove Quick registered or executed the connector successfully.
-
-Step 5 offers **Copy Quick settings**, **Export JSON example**, and **Inspect DIPS schema (read-only)**. The exported JSON is an example, **not a verified Quick import format**.
-
-## Troubleshooting and safety
-
-| Symptom | Check |
-| --- | --- |
-| SSH unknown/changed host key | Verify the fingerprint separately; update trusted `known_hosts` using your organization's procedure. Do not disable verification. |
-| `PERMISSIONS_NEED_REPAIR` | Review ownership and listed core-file permissions. Do not recursively fix a shared venv. |
-| Lambda `403` / expired credentials | Refresh the **gateway user's** authorized AWS/Okta session, then reverify the backend. |
-| Wrong tools appear | Check the Function URL, region and service identity **before** deploying. |
-| Plan hash changed / target exists | Regenerate and inspect; never force-replace someone else's concurrent change. |
-| Tool list missing in Quick | Confirm connector Test connection, save/relaunch if needed, and start a **new Quick chat**. |
-| Git read succeeds but write is refused | Check Quick action settings, repository permissions and the guard. Feature-branch rules are **not** repository allow-lists. |
-
-**Security boundaries:** Secrets stay on the gateway, never in Quick's environment field or a deployment manifest. Git PATs are entered via the gateway's approved hidden interactive prompt, **not** piped to `set_secret.py` over a nonexistent stdin token API. Enforce exact tool allow-lists and retain readback/rollback receipts. Do not claim the wizard has automated Quick database registration.
-
-## Repository status
-
-- **Current GitHub source:** v0.1 engineering MVP, retained below for historical reference.
-- **Latest validated handoff:** v0.3 ZIP distribution, with backend verification, automatic planning, create-only gateway bootstrap and manual Quick registration. Its source still needs a **separate reviewed promotion to this repo**; do not assume this README change deploys it.
-- **Recommended next change:** promote the exact v0.3 source and tests to a feature branch, verify Windows + clean Linux gateway, then update the version/checkout instructions and publish a tagged release.
+For technical detail, see [BUILD_AND_DEPLOY_MOP.md](BUILD_AND_DEPLOY_MOP.md), [ACCEPTANCE_MOP_v0_3.md](ACCEPTANCE_MOP_v0_3.md), and [RELEASE_NOTES_v0_3.md](RELEASE_NOTES_v0_3.md).
 
 ---
 
-## Legacy v0.1 engineering documentation
+## Detailed v0.3 implementation notes
 
-A runnable **Windows desktop wizard** for onboarding MCP targets to the **existing** registry-driven 3090-style gateway. It has a five-step tkinter GUI, strict SSH host-key verification, live Lambda MCP tool discovery, preview+CAS registry deployment, real `tools/list` health checks, automatic failure rollback, and guided Quick Desktop registration.
+# AQ-MCP Connector Wizard v0.3 — verified backends + automatic plans + guarded Linux gateway installer
 
-**Status:** 21 automated tests passing locally (Linux). **No live Windows Quick or 3090 acceptance run yet.** It is not a production-ready or fully automatic Quick connector installer. Requires an existing reviewed `~/aq-mcp` gateway with Python/venv and credentials; does not bootstrap a new gateway, deploy a new Docker image or patch your existing production wrapper code.
+## Status and scope
 
-## Start on Windows
+This is a **runnable engineering candidate**, not yet a live-tested Windows/3090 release. This v0.3 version retains the v0.2 fixes for Windows imports, historical gateway permissions, create-only gateway bootstrap and optional repair. It additionally verifies the selected Lambda/Git/local backend with a real MCP initialize/tools/list handshake, requires verification before Step 3, and generates the plan automatically when entering Step 4. Existing Lambda registry deployment, MCP `tools/list` discovery, fail-closed allow-list selection, checksum-bound rollback, and manual Amazon Quick registration remain available.
 
-1. Install Python 3.8+ from python.org with tkinter/Tcl/Tk. Recommended Python 3.11 or 3.12.
-2. In **PowerShell or CMD**, unzip this package to your chosen folder and run:
+The gateway runtime bundled here was curated from the supplied `aq-mcp-backup-20261019.tar.gz` with exactly these source files: `aq_registry.py`, `aq-run.sh`, `aq_mcp_stdio.py`, `aq_check.py`. No secrets, venv, runtime logs, certs, machine-specific targets, or private Git configurations are bundled. Dependencies mirror the examined environment: `mcp==2.3.0`, `botocore==1.43.113`, `httpx2==2.13.1`. These are version pins, **not hash-locked dependency wheels**; a package-index availability and supply-chain review is needed before broader rollout.
 
-   ```powershell
-   py -3 -m venv .venv
-   .\.venv\Scripts\python.exe -m pip install --upgrade pip
-   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-   .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-   .\.venv\Scripts\python.exe wizard.py
-   ```
+## On Windows
 
-   Or double-click `start_wizard.bat` after creating `.venv` and installing dependencies. It uses the local interpreter. No admin rights are required.
-3. Connect to your approved SSH server using OpenSSH **after verifying its host fingerprint out of band**. Ensure that its verified key is in your own `~/.ssh/known_hosts`. The wizard uses `paramiko.RejectPolicy()`, refuses unknown/changed host keys and accepts SSH public-key/agent authentication only.
-4. Your Linux host should already have `~/aq-mcp/targets.json`, `aq_registry.py`, `aq-run.sh`, `aq_mcp_stdio.py`, `aq_check.py`, and `venv/bin/python` from your reviewed gateway install. No `sudo`, no modifying JakeBot, no generic remote commands.
+Extract the ZIP into its own folder. In CMD or PowerShell, from the repository root or extracted v0.3 folder:
 
-## Create a new Lambda connector
+Use the project-local `.venv` commands from Sections 1–2 above. Do not install dependencies into the global interpreter.
 
-Fill in server/user, target name, HTTPS Lambda Function URL, then **Discover offered tools**. Explicitly select the exact tool names to allow. Only tools returned from the backend can pass the deploy gate. No `tools/call` occurs during discovery or health check. If discovery fails, the wizard fails closed rather than exposing all tools.
+Windows is expected to **skip POSIX-only remote filesystem integration fixtures**; failures are not expected. The Linux/Xvfb test run for this version is **41/41 passing**, including a Tkinter navigation test. The Windows GUI and live 3090 path must still be tested on your workstation.
 
-Click **Generate deployment plan**; it reads the installed registry hash and refuses duplicate targets. Review the plan, click **Deploy approved plan** and explicitly confirm. The gateway saves a mode-600 backup, writes the new registry atomically under an advisory lock, and runs `aq_check.py <target>` (MCP initialize + tools/list). On failure it attempts SHA-guarded rollback. If any intervening registry update makes rollback unsafe, rollback refuses and requires manual reconciliation. No unrelated gateway processes are restarted.
+The Windows app requires Python with tkinter and Paramiko 3.4–3.x. SSH is key/agent-based and uses `paramiko.RejectPolicy()`. Verify the server's host fingerprint out of band and place the confirmed key in the provided `known_hosts` path. No password fallback, automatic host-key trust, Quick-DIPS mutation or PAT collection is implemented.
 
-The UI then shows exact local Quick connector values. Enter them in **Customize → Connectors → Create/Add MCP** (actual labels may vary): connection type **Local**, command `ssh`, and the shown arguments in the single chip-accepting Arguments field. Keep Environment Variables empty. Save and open a **new** Quick chat to refresh tool discovery. Edit+Save is used to relaunch existing long-lived connectors where needed.
+## First screen: inspect, bootstrap or repair
 
-## Git and local connectors
+1. Supply SSH host, SSH username and `known_hosts` path.
+2. Click **Inspect gateway (read only)**. It reports one of:
+   - `MISSING` — fresh Linux host has no `~/aq-mcp` and can be bootstrapped.
+   - `READY` — installed core files have no group/world write access; add targets normally.
+   - `PERMISSIONS_NEED_REPAIR` — historical owner-owned core files are group/world writable; inspection is allowed, **deploy/apply is blocked** pending explicit repair.
+   - `INCOMPLETE`, `FOREIGN`, or `SYMLINK` — cannot be bootstrapped over or silently repaired; stop and investigate.
+3. If `MISSING`, click **Install missing gateway** and confirm the creation and dependency downloads. The host needs Python **3.10+**, `venv` with pip, and access to an approved pip index containing the three pins and transitive dependencies. Installer stages source/venv in an owner-private temporary directory, tests Python imports, exclusively creates `~/aq-mcp` (mode `0700`), and moves the validated files. A collision refuses to overwrite. If file activation unexpectedly fails after creation, the root is left **private but incomplete** for manual reconciliation.
+4. If `PERMISSIONS_NEED_REPAIR`, click **Repair core permissions**, read the exact list and approve deliberately. Only the SSH-user-owned directory and **five core files** (`targets.json`, `aq_registry.py`, `aq-run.sh`, `aq_mcp_stdio.py`, `aq_check.py`) with excess write permissions are changed, removing `g+w`/`o+w`. This can affect workflows expecting shared group writes; do not approve without checking. No other configuration, Git targets, secrets or running services are modified. **Important:** the historical venv also contained group-writable directories/packages. The wizard reports writable venv-directory warnings but does not recursively chmod or rebuild that shared virtual environment; this core-file repair is not a complete security hardening certificate. Re-inspect until `READY`.
+5. **Never click Bootstrap on the existing 3090 gateway**. The historical backup shows `aq-mcp/` mode `0775` and registry/core sources `0664`; the existing installation needs an operator-reviewed permission decision, not a replacement.
 
-The first release safely **registers an existing** `github-ghes` or `gitlab` Git target from the gateway, using `aq_git_run.py` over SSH, and existing local registry targets such as `build-artifacts` via `aq-run.sh`. It **does not** create new Git Docker targets, change image digests, create PAT files, edit branch guards, or install arbitrary local server scripts. For Git it runs `aq_git_run.py --check` but this does not authenticate a live tool call. For local targets it checks MCP `tools/list` before generating registration instructions.
-
-The current `set_secret.py` supports a hidden **interactive getpass twice** workflow. It does **not** implement a noninteractive PAT-via-stdin API. Place tokens separately with its approved SSH terminal command, never in this wizard or a JSON manifest. GitLab API auth uses a PAT, even though Quick launches the connector over SSH.
-
-## No direct Quick SQLite writes
-
-The installed Quick Desktop's `DIPS` database is **not a supported, verified registration API**. Merely discovering a SQLite schema while Quick is closed is insufficient to prove its connector lifecycle, cross-table transactions, caches, signatures, or Electron synchronization. `quick_reg.py` exposes only a read-only `sqlite_master` inspector, a safe example JSON exporter, and explicit `MANUAL_REQUIRED` status. It **never inserts, updates or deletes any DIPS rows**. Fully automatic local Quick registration remains a separately gated future milestone, conditional on a supported provider interface and real readback tests.
-
-## CLI for reproducible operator runs
+### Equivalent headless commands (optional)
 
 ```cmd
-.\.venv\Scripts\python.exe cli.py export templates/example_lambda_manifest.json --output-file connector-example.json
-.\.venv\Scripts\python.exe cli.py inspect templates/example_lambda_manifest.json
-.\.venv\Scripts\python.exe cli.py discover templates/example_lambda_manifest.json
-.\.venv\Scripts\python.exe cli.py plan templates/example_lambda_manifest.json --plan-file approved-plan.json
-.\.venv\Scripts\python.exe cli.py apply templates/example_lambda_manifest.json --plan-file approved-plan.json --approve-target demo-epg --receipt-file applied-receipt.json
+py -3 cli.py bootstrap --host approved-jump.example.internal --user engineer --approve-bootstrap
+py -3 cli.py repair-permissions --host approved-jump.example.internal --user engineer --approve-repair
 ```
 
-The manifest, plan and receipt have **no secret tokens** but contain internal hostnames and URLs: handle them as internal-only files. Plan and receipt exports refuse to overwrite existing files. Never run `apply` until you have inspected your plan. A known-good rollback command after approval is:
+The CLI immediately checks the live state; neither command overwrites an existing gateway. Avoid putting internal addresses and usernames into externally shared scripts or screenshots.
 
-```cmd
-.\.venv\Scripts\python.exe cli.py rollback --receipt-file applied-receipt.json --host trusted-jump.example.internal --user engineer --approve-target demo-epg
-```
+## Configure a Lambda target
 
-Rollback works only if no other registry edit has occurred since that deployment. It restores the exact saved bytes and does not touch Quick's manually registered connector (remove it yourself if rolling back).
+The new runtime contains an initially empty `~/aq-mcp/targets.json`. For either newly installed or existing ready gateways:
 
-## Limitations and next milestones
+- Choose **AWS Lambda Function URL** (IAM/SigV4) and a lowercase target name, then enter the **HTTPS Lambda Function URL** with the correct region. URLs outside the exact Lambda Function URL shape are rejected.
+- Click **Discover offered tools**. This uses the gateway's AWS identity and MCP `initialize` + `tools/list` only. It does **not** call application tools.
+- Select an explicit **nonempty** allow-list. The underlying proxy currently treats an empty allow-list as exposing every tool; v0.2 refuses it.
+- Generate a deployment plan. Review the exact proposed target entry and live registry hash.
+- Deploy with explicit confirmation. It re-discovers the exact tools, checks the registry SHA, takes a protected byte-exact backup, writes only the new target, runs `aq_check.py` for `tools/list`, and on failure requests checksum-guarded rollback.
+- On the **Quick registration** screen, copy the Local SSH connector arguments into Amazon Quick Desktop; save and open a new chat to refresh the tool list.
 
-- No new gateway bootstrap, Docker installation, role provisioning, Okta refresh or unattended PAT injection. The target host must already be prepared.
-- Only IAM-authenticated AWS Lambda Function URLs are accepted for new remote targets. Generic HTTP MCP is **not** silently routed through SigV4.
-- The strict allow-list enforcer in the **current upstream wrapper** uses an empty list to mean *allow everything*. Therefore the wizard bans empty allow-lists and rejects unknown tool names.
-- The remote SSH Python helper is transferred as **base64-encoded fixed source in a command**, with request values over stdin. It does not pass tokens/URLs in command arguments. The helper does not need to be installed persistently.
-- Existing unrelated Quick connectors are not edited or relaunched. Verify per-tool permissions and the selected repo before approving any Git write; the current branch guard is not a repository allow-list.
-- Future: signed/version-pinned gateway bootstrap, broader local/Git target provisioning with individual security gates, approved automatic Quick registration if available, and multi-user identities/credential renewal.
+**Fresh host credentials:** the installer **does not create or copy AWS/Okta credentials, IAM roles, Git PATs or corporate certificates**. For Lambda tool discovery, the host must already have valid authorized AWS credentials available to the SSH user's normal botocore credential chain. Installing the gateway and authenticating it are distinct tasks. Corporate Okta credentials can expire.
 
-## Source accuracy corrections
+## Git and local modes
 
-The source snapshot supplied for the 3090 shows **`~/aq-mcp/targets.json`**, not `~/aq-mcp/registries/registry.json`. Its `aq_registry.py` supports `remote` (Lambda) and a whitelisted `local` server; Git uses **`git_targets.json`** with a separate launcher. The actual `set_secret.py` uses `getpass` rather than a piped-stdin PAT interface. The claimed `AQ_MCP_WIZARD_MOP.md` file was not attached or retrievable in this session, so this implementation is grounded in the supplied project outline, prior source snapshot and MOP, not a line-by-line audit of that named file.
+These modes remain **existing-target registration only** in this version. Git requires a preconfigured `aq_git_run.py`, Docker images, `git_targets.json`, an operator-installed PAT and `aq_git_guard.py`. Local requires an existing whitelisted `local` registry entry. A freshly installed Lambda-only gateway cannot automatically configure GHES, GitLab or Build Artifacts without a separate reviewed adapter installer. Neither backend accepts arbitrary local script paths.
 
-**Receipt retention:** After a GUI deployment, select **Save receipt** on the Review page. Its JSON receipt makes checksum-bound rollback possible from the CLI after the GUI exits. Save it in an access-controlled workspace, not a shared/public folder.
+## Amazon Quick auto-registration
+
+DIPS SQLite is not a validated writable connector-registration API. We intentionally **do not modify it**. Generate the exact Quick connector name, `ssh` command and chips (Lambda/local: launcher + target, Git: venv Python + Git launcher + target). The user finishes registration in Quick's UI. The code can inspect only DIPS schema names read-only; it cannot insert connectors or grant tool permissions. Fully automatic Quick registration awaits a supported interface and a full lifecycle test.
+
+## Recovery and limitations
+
+After a successful deployment, save the private receipt on the Review page. Rollback is allowed only while the registry bytes still have the exact post-deployment SHA; parallel edits cause a conflict rather than being overwritten. No running services are restarted and unrelated checkout files are untouched.
+
+The bootstrap is a **new-host source/package installer**, not identity provisioning. The staged venv is relocated; use `~/aq-mcp/venv/bin/python -m pip` (not the installed `pip` console-script shebang) for any later package operations. The runtime itself launches via the Python executable. This relocation path has not yet been accepted on a clean Linux host; live qualification must confirm the interpreter, `mcp` imports and tool discovery after relocation.
+
+## New v0.3 user flow
+
+**Step 2 now includes `Test / Verify Backend (MCP handshake)`**. For Lambda it uses the SigV4 signer and configured Lambda URL. For Git it starts the existing guarded `aq_git_run.py` launcher and requests only MCP metadata. For Local it starts the existing approved target through `aq_registry.py run`. An existing target is not installed by this test. Tool listing proves only protocol connectivity, not tool safety or functionality.
+
+**Step 3 uses the verified tool inventory**. Select explicit safe tools. The wizard warns about potentially mutating tool names and a specific EPG-vs-RTR Alerts mismatch observed in the October 19 demo. Names are merely heuristic clues; inspect descriptions and schemas to determine risk.
+
+**Step 4 generates the plan automatically** after Step 3. Manual `Refresh deployment plan` remains available. The plan contains a backend identity fingerprint, exact selected allow-list, registry hash, action list, warnings, and Quick registration information. Changing the endpoint or tool selection invalidates the old plan. A matching existing Lambda target gets a *registration-only* plan rather than an attempted duplicate deployment.
+
+**Step 5 is a complete manual Quick MOP**: choose `Local`, fill ID and name, enter `ssh`, paste the space-separated Arguments field, leave environment variables EMPTY, Test connection, Save changes, open a new chat and perform a safe read. Quick auto-registration has not occurred, and the DIPS database is never modified.
+
+See `RELEASE_NOTES_v0_3.md` and `ACCEPTANCE_MOP_v0_3.md` for limits and step-by-step qualification.

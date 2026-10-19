@@ -1,18 +1,19 @@
 flowchart TD
-  UI[Windows Tkinter Wizard] --> V[Validate URL / target / policies]
-  V --> P[SSH with trusted host keys - RejectPolicy]
-  P --> INS[Read live targets.json and SHA-256]
-  INS --> D[MCP initialize + tools/list on 3090]
-  D --> S[Engineer selects explicit allowed tools]
-  S --> REV[Preview manifest and expected base hash]
-  REV -->|Explicit approval| APPLY[Atomic new-target registry insert]
-  APPLY --> CHECK[aq_check.py filtered tools/list]
-  CHECK -->|Failed| RB[CAS-bound rollback from private backup]
-  CHECK -->|Passed| READY[Gateway verified]
-  READY --> MANUAL[Generate Quick Local SSH command and chips]
-  MANUAL --> QUICK[User manually saves connector in Quick]
-  QUICK --> FRESH[New chat / verify safe read]
-  INS --> EXIST[Existing Git / Local target]
-  EXIST --> VALID[Preflight existing launcher]
-  VALID --> MANUAL
-  DIPS[(Quick DIPS SQLite)] -. Read-only schema inspection only .-> UI
+    A[Step 1: Inspect or bootstrap jump gateway] --> B[Step 2: Choose backend]
+    B --> C{Type}
+    C -->|Lambda| D[Live SigV4 proxy MCP metadata handshake]
+    C -->|Existing Git| E[Guarded Docker MCP metadata handshake]
+    C -->|Existing local| F[Local approved MCP metadata handshake]
+    D --> G[Backend fingerprint + tool inventory]
+    E --> G
+    F --> G
+    G --> H[Step 3: Explicit allow-list review]
+    H --> I[Step 4: Auto-generate checksum-bound plan]
+    I --> J{Existing Lambda target?}
+    J -->|Yes, matching URL/allow-list| K[Registration-only; no registry edit]
+    J -->|No| L[Approval + create-only registry change]
+    L --> M[Health check and guarded rollback on failure]
+    M --> N[Step 5: Manual Quick registration]
+    K --> N
+    N --> O[Test connection + new chat + harmless read]
+    O -.-> P[Quick DIPS remains untouched]

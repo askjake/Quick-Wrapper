@@ -1,7 +1,13 @@
-# Per-developer Python virtual environment and temporary files
+# Per-developer state
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 .env
+.env.*
+*.log
+*.pyc
+# Private deployment receipts / transient plans
+*-receipt.json
+*deployment-plan.json

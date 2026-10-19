@@ -12,7 +12,7 @@ class FakeGateway:
     def __init__(self):self.calls=[];self.sha='a'*64;self.change=False;self.pass_health=True
     def run(self,q,timeout=65):
         self.calls.append(q)
-        if q['op']=='inspect':return {'sha256':self.sha,'target_names':[],'kinds':{},'git_targets':['github-ghes']}
+        if q['op']=='inspect':return {'state':'READY','installed':True,'sha256':self.sha,'target_names':[],'kinds':{},'git_targets':['github-ghes']}
         if q['op']=='discover':return {'tools':[{'name':'list_genres','description':'Read'}], 'truncated':False}
         if q['op']=='apply':return {'status':'DEPLOYED_PENDING_CHECK','target':q['target'],'before':self.sha,
                                    'after':'b'*64,'backup_name':'targets-1234567890-abcdef123456-aaaaaaaaaaaa.json'}

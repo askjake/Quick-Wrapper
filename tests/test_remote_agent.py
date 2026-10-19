@@ -3,6 +3,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import remote_agent as remote
 
+@unittest.skipUnless(os.name=='posix','Remote filesystem transaction requires POSIX/Linux')
 class TestRemoteAgent(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory()

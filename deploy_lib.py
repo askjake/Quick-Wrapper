@@ -10,7 +10,8 @@ import os
 import pathlib
 import threading
 
-from model import validate_spec, make_registry_entry, plan, quick_connector, ValidationError
+from model import (validate_spec, make_registry_entry, plan, quick_connector,
+                   backend_identity, risk_tool_names, identity_warnings, ValidationError)
 
 HERE = pathlib.Path(__file__).resolve().parent
 
@@ -73,9 +74,81 @@ class ConnectorDeployer(object):
     def inspect(self):
         return self.gateway.run({'op':'inspect'})
 
+    def bootstrap(self, approved=False):
+        """Creates gateway only when absent. Requires explicit dependency-install consent."""
+        if not approved:
+            raise DeploymentError('Fresh gateway install requires explicit approval')
+        state = self.inspect()
+        if state.get('state') != 'MISSING':
+            raise DeploymentError('Bootstrap refused: gateway is not absent (' + str(state.get('state')) + ')')
+        from bootstrap_lib import make_bundle
+        payload = make_bundle()
+        reply = self.gateway.run(dict(op='bootstrap', confirm='CREATE_FRESH_GATEWAY',
+                                      install_dependencies=True, **payload), timeout=490)
+        after = self.inspect()
+        if after.get('state') != 'READY':
+            raise DeploymentError('Gateway bootstrap did not produce READY state; inspect manually')
+        return reply
+
+    def repair_permissions(self, observed, approved=False):
+        if not approved:
+            raise DeploymentError('Permission repair requires explicit approval')
+        if observed.get('state') != 'PERMISSIONS_NEED_REPAIR':
+            raise DeploymentError('Gateway is not in repairable permission state')
+        result=self.gateway.run({'op':'repair_permissions',
+                                 'confirm':'REPAIR_OWNED_CORE_PERMISSIONS',
+                                 'mode_issues':observed['mode_issues']})
+        if self.inspect().get('state')!='READY':
+            raise DeploymentError('Permission repair incomplete; inspect before proceeding')
+        return result
+
+    def verify_backend(self, spec):
+        """Live MCP metadata-only backend check. Does NOT execute application tools."""
+        valid=dict(spec)
+        if valid.get('kind')=='lambda':
+            valid['allow']=['verification-placeholder']
+        validate_spec(valid)
+        state=self.inspect()
+        if state.get('state')!='READY':
+            raise DeploymentError('Gateway not READY; inspect gateway first: '+str(state.get('state')))
+        kind=spec['kind']
+        name=spec['target']
+        installed=None
+        if kind=='lambda':
+            if name in state.get('target_names',[]):
+                installed=self.gateway.run({'op':'inspect_lambda_target','target':name})
+                if installed['url'].rstrip('/')!=spec['url'].rstrip('/'):
+                    raise DeploymentError('This name already targets a DIFFERENT Lambda URL; refuse verification under the wrong label.')
+            info=self.discover(valid)
+            method='SigV4 Lambda Function URL -> MCP initialize/tools/list'
+        else:
+            if kind=='git':
+                if name not in state.get('git_targets',[]):
+                    raise DeploymentError('Git target is not configured on this gateway')
+            elif name not in state.get('target_names',[]) or state.get('kinds',{}).get(name)!='local':
+                raise DeploymentError('Selected local MCP target is not registered on gateway')
+            info=self.gateway.run({'op':'probe_existing','kind':kind,'target':name},timeout=63)
+            method=('Guarded Git MCP launcher -> initialize/tools/list' if kind=='git' else
+                    'Existing local registry launcher -> initialize/tools/list')
+        names=[t['name'] for t in info.get('tools',[])]
+        if info.get('truncated') or info.get('count')!=len(names) or not names or len(set(names))!=len(names):
+            raise DeploymentError('Incomplete or empty MCP tools/list result; backend not verified')
+        return {'status':'BACKEND_VERIFIED', 'kind':kind,'target':name,
+                'existing_target': installed is not None,
+                'existing_allow': installed['allow'] if installed else None,
+                'existing_extra_config_present': installed.get('extra_config_present',[]) if installed else [],
+                'backend_identity_sha256':backend_identity(spec),
+                'registry_sha256':state['sha256'],
+                'handshake':method,'tool_count':len(names),'tools':info['tools'],
+                'potentially_mutating_tools_name_only':risk_tool_names(names),
+                'warnings':identity_warnings(spec,names),
+                'qualification':'MCP metadata handshake only: no tool execution, no proof of write safety'}
+
     def prepare(self,spec):
         validate_spec(spec)
         info=self.inspect()
+        if info.get('state')!='READY':
+            raise DeploymentError('Gateway not ready: '+str(info.get('state'))+'. Inspect, bootstrap or repair permissions first.')
         if spec['kind']=='git':
             if spec['target'] not in info['git_targets']:
                 raise DeploymentError('Git target is not installed/configured on the gateway')
@@ -89,7 +162,21 @@ class ConnectorDeployer(object):
             if not result.get('ok'):
                 raise DeploymentError('Local target tools/list health check failed')
         elif spec['target'] in info['target_names']:
-            raise DeploymentError('Target already exists; this release does not overwrite registry targets')
+            installed=self.gateway.run({'op':'inspect_lambda_target','target':spec['target']})
+            if installed.get('registry_sha256')!=info['sha256']:
+                raise DeploymentError('Registry changed during inspection; replan')
+            if installed['url'].rstrip('/')!=spec['url'].rstrip('/') or sorted(installed['allow'])!=sorted(spec['allow']):
+                raise DeploymentError('Existing target differs in URL or allow-list; this wizard never overwrites it. Match the installed configuration or use a new target name.')
+            result=plan(spec,info['sha256'])
+            result['mode']='existing-target-registration-only'
+            result['execution_plan']=['1. Confirm existing Lambda URL and allow-list match your selection.',
+                '2. Validate the existing target through aq_check.py (tools/list only).',
+                '3. Leave the registry and existing target UNCHANGED.',
+                '4. Register the Local SSH connector manually in Quick.',
+                '5. Start a new Quick chat and verify one harmless read.']
+            result['warnings'].append('This target already exists: registration-only; no gateway files will be changed.')
+            result['gateway']={'host':spec['host'],'user':spec['user']}
+            return result
         result=plan(spec,info['sha256'])
         result['gateway']={'host':spec['host'],'user':spec['user']}
         return result
@@ -110,6 +197,19 @@ class ConnectorDeployer(object):
         if spec['kind']!='lambda':
             # Git / local adapter only tests existing installation: no remote writes.
             return {'status':'EXISTING_TARGET_ONLY','target':spec['target'],
+                    'registration':'MANUAL_REQUIRED','quick_connector':quick_connector(spec)}
+        if prepared.get('mode')=='existing-target-registration-only':
+            current=self.inspect()
+            if current.get('sha256')!=prepared.get('expected_registry_sha256'):
+                raise DeploymentError('Registry changed since existing-target plan; replan')
+            existing=self.gateway.run({'op':'inspect_lambda_target','target':spec['target']})
+            if existing['url'].rstrip('/')!=spec['url'].rstrip('/') or sorted(existing['allow'])!=sorted(spec['allow']):
+                raise DeploymentError('Installed target changed; no registration receipt produced')
+            health=self.gateway.run({'op':'check','target':spec['target'],
+                                     'expected_allow_count':len(spec['allow'])},timeout=70)
+            if not health.get('ok'):
+                raise DeploymentError('Existing target tools/list failed; no registry modifications attempted')
+            return {'status':'EXISTING_TARGET_VERIFIED','target':spec['target'],
                     'registration':'MANUAL_REQUIRED','quick_connector':quick_connector(spec)}
         entry=make_registry_entry(spec)
         # Re-discover using IAM on the actual gateway just before any registry change.

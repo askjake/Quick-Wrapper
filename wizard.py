@@ -1,4 +1,4 @@
-"""AQ-MCP Connector Wizard v0.1, local Windows desktop UI (tkinter).
+"""AQ-MCP Connector Wizard v0.3, local Windows desktop UI (tkinter).
 No web listener, no Quick database mutations, no saved PATs or passwords.
 """
 import json
@@ -8,7 +8,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from deploy_lib import SSHGateway, ConnectorDeployer, DeploymentError
-from model import validate_gateway, validate_spec, ValidationError, quick_connector, config_export
+from model import (validate_gateway, validate_spec, ValidationError, quick_connector,
+                   config_export, backend_identity, risk_tool_names)
 from quick_reg import quick_instructions, write_quick_config, inspect_dips_read_only
 
 BG='#101826'
@@ -20,7 +21,7 @@ ACCENT='#56C5E6'
 class Wizard(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AQ-MCP Connector Wizard  •  v0.1')
+        self.title('AQ-MCP Connector Wizard  •  v0.3')
         self.geometry('970x710')
         self.minsize(760,620)
         self.configure(bg=BG)
@@ -39,6 +40,9 @@ class Wizard(tk.Tk):
         self.last_receipt=None
         self.last_gateway=None
         self.discovered=[]
+        self.gateway_inspection=None
+        self.backend_verification=None
+        self.busy=False
         self.vars={
             'host':tk.StringVar(), 'user':tk.StringVar(),
             'known_hosts':tk.StringVar(value=os.path.expanduser('~/.ssh/known_hosts')),
@@ -72,9 +76,15 @@ class Wizard(tk.Tk):
         ttk.Label(parent,text=text,style='Muted.TLabel',wraplength=840,justify='left').pack(anchor='w',pady=7)
 
     def text_area(self,parent,height=8):
-        t=tk.Text(parent,height=height,wrap='word',background=PANEL,foreground=FG,
-                  insertbackground=FG,relief='flat',font=('Consolas',10),padx=12,pady=12)
-        t.pack(fill='both',expand=True,pady=8)
+        holder=ttk.Frame(parent)
+        holder.pack(fill='both',expand=True,pady=8)
+        scroll=ttk.Scrollbar(holder,orient='vertical')
+        scroll.pack(side='right',fill='y')
+        t=tk.Text(holder,height=height,wrap='word',background=PANEL,foreground=FG,
+                  insertbackground=FG,relief='flat',font=('Consolas',10),padx=12,pady=12,
+                  yscrollcommand=scroll.set)
+        t.pack(side='left',fill='both',expand=True)
+        scroll.config(command=t.yview)
         return t
 
     def render(self):
@@ -90,18 +100,22 @@ class Wizard(tk.Tk):
 
     def render_gateway(self):
         ttk.Label(self.body,text='01  Trusted SSH jump server',style='Heading.TLabel').pack(anchor='w')
-        self.helper(self.body,'The wizard uses SSH keys or the SSH agent. It refuses unknown host keys. The gateway must already contain the reviewed aq-mcp runtime.')
+        self.helper(self.body,'Strict SSH host-key verification. Inspect first: a missing gateway can be installed; an existing group-writable gateway can be reviewed and repaired with explicit approval. No existing runtime is overwritten.')
         self.field(self.body,'Jump server hostname / IP','host')
         self.field(self.body,'Remote SSH username','user')
         self.field(self.body,'Local known_hosts path','known_hosts')
-        ttk.Button(self.body,text='Test SSH / inspect gateway (read only)',command=self.inspect_action).pack(anchor='w',pady=20)
+        buttons=ttk.Frame(self.body);buttons.pack(anchor='w',pady=(16,4))
+        ttk.Button(buttons,text='Inspect gateway (read only)',command=self.inspect_action).pack(side='left',padx=(0,8))
+        ttk.Button(buttons,text='Install missing gateway',command=self.bootstrap_action).pack(side='left',padx=(0,8))
+        ttk.Button(buttons,text='Repair core permissions',command=self.repair_action).pack(side='left')
+        self.helper(self.body,'Fresh install: creates ~/aq-mcp privately and installs reviewed pinned dependencies using the jump server package index. No AWS credentials, PATs, Docker images, or Quick records are installed. Existing install: permission repair removes group/world write on owned core files only (may affect shared workflows).')
         self.gateway_result=self.text_area(self.body,9)
-        self.gateway_result.insert('1.0','Connect using an approved, pre-trusted host key. No gateway writes during inspection.')
+        self.gateway_result.insert('1.0','Click Inspect. A missing gateway can be installed only with approval; core permission repair is separate.')
 
     def render_backend(self):
         ttk.Label(self.body,text='02  Select MCP backend',style='Heading.TLabel').pack(anchor='w')
-        self.helper(self.body,'Choose the preapproved gateway path. Only new Lambda registry entries can be deployed in v0.1.')
-        group=ttk.Frame(self.body);group.pack(fill='x',pady=14)
+        self.helper(self.body,'Choose the preapproved gateway path. Only new Lambda registry entries can be deployed in v0.2.')
+        group=ttk.Frame(self.body);group.pack(fill='x',pady=8)
         for label,value in [('AWS Lambda Function URL (SigV4)','lambda'),('Guarded Git MCP (existing)','git'),('Local approved MCP (existing)','local')]:
             ttk.Radiobutton(group,text=label,value=value,variable=self.vars['kind'],command=self.kind_changed).pack(anchor='w',pady=4)
         self.field(self.body,'Registry / Git target name','target')
@@ -116,9 +130,60 @@ class Wizard(tk.Tk):
         else:
             self.helper(self.body,'Local mode registers an existing local target such as build-artifacts; it cannot execute arbitrary scripts.')
             ttk.Button(self.body,text='Use build-artifacts',command=lambda:self.vars['target'].set('build-artifacts')).pack(anchor='w')
+        ttk.Button(self.body,text='Test / Verify Backend (MCP handshake)',command=self.verify_backend_action).pack(anchor='w',pady=(15,7))
+        self.backend_result=self.text_area(self.body,7)
+        v=self.backend_verification
+        if v and v.get('backend_identity_sha256')==backend_identity(self.spec()):
+            self.backend_result.insert('1.0',self.describe_backend(v))
+        else:
+            self.backend_result.insert('1.0','Not verified. Test the selected backend before continuing.\n'
+                                       'The check requests MCP initialize + tools/list, but does not execute application tools.\n'
+                                       'Git/local verification starts the existing approved MCP launcher.')
+
+    def describe_backend(self,report):
+        lines=['STATUS: '+report['status'],
+               'Registry target: '+('EXISTING (registration-only)' if report.get('existing_target') else 'NEW (eligible for create-only install)'),
+               'Handshake: '+report['handshake'],
+               'Offered tools: '+str(report['tool_count']),
+               'Backend identity: '+report['backend_identity_sha256'][:20]+'...',
+               'Verification only: no application tool calls.']
+        for warning in report.get('warnings',[]):lines.append('WARNING: '+warning)
+        if report.get('potentially_mutating_tools_name_only'):
+            lines.append('REVIEW potential mutators (name-based guess, NOT a safety verdict):')
+            lines.extend('  - '+name for name in report['potentially_mutating_tools_name_only'])
+        lines.extend('  '+t['name'] for t in report['tools'])
+        return '\n'.join(lines)
+
+    def verify_backend_action(self):
+        spec=self.spec()
+        # Backend verification does not require choosing tool policy yet.
+        if spec['kind']=='lambda':spec['allow']=['verification-placeholder']
+        def done(ok,result):
+            if not ok:
+                self.backend_verification=None
+                messagebox.showerror('Backend verification failed',str(result))
+                if self.step==1:self.backend_result.delete('1.0','end');self.backend_result.insert('1.0','FAILED: '+str(result))
+                return
+            if result.get('backend_identity_sha256')!=backend_identity(self.spec()):
+                self.backend_verification=None
+                messagebox.showwarning('Inputs changed','The selected backend changed while verification was running. Test again.');return
+            self.backend_verification=result
+            self.prepared=None
+            if self.vars['kind'].get()=='lambda':
+                self.discovered=list(result['tools'])
+                self.tool_selection=list(result.get('existing_allow') or [])
+            if self.step==1:
+                self.backend_result.delete('1.0','end')
+                self.backend_result.insert('1.0',self.describe_backend(result))
+            messagebox.showinfo('Backend verification','MCP tools/list succeeded: {} tool(s).\n'
+                                'Review warnings and choose the allowed tools next.'.format(result['tool_count']))
+        self.action(lambda:ConnectorDeployer(self.gateway()).verify_backend(spec),done)
 
     def kind_changed(self):
         self.prepared=None
+        self.backend_verification=None
+        self.discovered=[]
+        self.tool_selection=[]
         k=self.vars['kind'].get()
         self.vars['target'].set({'lambda':'epg-demo','git':'github-ghes','local':'build-artifacts'}[k])
         self.render()
@@ -129,7 +194,8 @@ class Wizard(tk.Tk):
             self.helper(self.body,'This backend is already registered on the gateway. Its existing Git guard / local tool policy is not modified.')
             return
         self.helper(self.body,'Discover tools through the 3090 (MCP initialize + tools/list only). Check exact tools to expose. An empty list is prohibited because the current proxy treats empty as ALL.')
-        ttk.Button(self.body,text='Discover offered tools (read-only requests)',command=self.discover_action).pack(anchor='w',pady=6)
+        ttk.Button(self.body,text='Re-test / refresh backend tool list',command=self.discover_action).pack(anchor='w',pady=6)
+        self.helper(self.body,'WARNING: Tool names and descriptions are not safety guarantees. An EPG label with Alerts/export tools may indicate the wrong Lambda URL.')
         self.tool_box=tk.Listbox(self.body,selectmode='multiple',height=12,exportselection=False,
                                  bg=PANEL,fg=FG,selectbackground='#28617D',
                                  selectforeground='white',font=('Consolas',10),relief='flat')
@@ -138,18 +204,21 @@ class Wizard(tk.Tk):
             self.tool_box.insert('end',t['name']+'   '+t.get('description','')[:85])
             if t['name'] in getattr(self,'tool_selection',[]): self.tool_box.selection_set(i)
         self.helper(self.body,'Select explicitly. An actual deployment will rediscover and verify every selected name before writing.')
+        if self.backend_verification:
+            for warning in self.backend_verification.get('warnings',[]):self.helper(self.body,'WARNING: '+warning)
 
     def render_review(self):
         ttk.Label(self.body,text='04  Plan, deploy and verify',style='Heading.TLabel').pack(anchor='w')
-        self.helper(self.body,'Preview and checksum the LIVE registry before approval. Apply is locked until a plan exists and your approval is confirmed.')
+        self.helper(self.body,'The verified backend and selected tools produce a plan automatically. The live registry is checked before approval; Apply is locked until planning finishes.')
         controls=ttk.Frame(self.body);controls.pack(fill='x',pady=6)
-        ttk.Button(controls,text='Generate deployment plan',command=self.plan_action).pack(side='left',padx=(0,10))
+        ttk.Button(controls,text='Refresh deployment plan',command=self.plan_action).pack(side='left',padx=(0,10))
         ttk.Button(controls,text='Deploy approved plan',command=self.deploy_action).pack(side='left',padx=(0,10))
         ttk.Button(controls,text='Rollback last deployment',command=self.rollback_action).pack(side='left',padx=(0,10))
         ttk.Button(controls,text='Save receipt',command=self.save_receipt_action).pack(side='left')
         self.plan_view=self.text_area(self.body,16)
         if self.prepared:self.plan_view.insert('1.0',json.dumps(self.prepared,indent=2))
-        else:self.plan_view.insert('1.0','No approved plan yet. Click Generate deployment plan.')
+        else:self.plan_view.insert('1.0','Generating a deployment plan automatically from verified backend and selected tools...')
+        self.after(75,self.auto_plan)
 
     def render_quick(self):
         ttk.Label(self.body,text='05  Register in Amazon Quick',style='Heading.TLabel').pack(anchor='w')
@@ -163,6 +232,14 @@ class Wizard(tk.Tk):
         ttk.Button(controls,text='Export JSON example',command=self.export_action).pack(side='left',padx=(0,10))
         ttk.Button(controls,text='Inspect DIPS schema (read-only)',command=self.dips_action).pack(side='left')
         self.helper(self.body,'After saving in Quick, open a NEW Quick chat, verify tools/list or a harmless read, and review per-tool permission settings. Registration status: MANUAL_REQUIRED.')
+
+    def auto_plan(self):
+        if self.step != 3 or self.busy:return
+        current=self.spec()
+        if self.prepared and self.prepared.get('backend_identity_sha256')==backend_identity(current):
+            if current['kind']!='lambda' or self.prepared.get('registry_entry',{}).get('allow')==sorted(current.get('allow',[])):
+                return
+        self.plan_action()
 
     def spec(self):
         spec={k:v.get().strip() for k,v in self.vars.items() if k!='known_hosts'}
@@ -185,13 +262,18 @@ class Wizard(tk.Tk):
         return SSHGateway(spec['host'],spec['user'],self.vars['known_hosts'].get().strip())
 
     def action(self,task,callback=None):
+        if self.busy:return
+        self.busy=True
+        self.back_btn.config(state='disabled');self.next_btn.config(state='disabled')
         self.status.config(text='Working…')
         self.configure(cursor='watch')
         def run():
             try:result=task();ok=True
             except Exception as e:result=str(e);ok=False
             def done():
+                self.busy=False
                 self.configure(cursor='');self.status.config(text='Ready' if ok else 'Operation failed')
+                self.back_btn.config(state='disabled' if self.step==0 else 'normal');self.next_btn.config(state='normal')
                 if callback:callback(ok,result)
                 elif not ok:messagebox.showerror('Operation failed',result)
             self.after(0,done)
@@ -200,31 +282,90 @@ class Wizard(tk.Tk):
     def inspect_action(self):
         def done(ok,result):
             self.gateway_result.delete('1.0','end')
+            self.gateway_inspection=result if ok else None
             self.gateway_result.insert('1.0',json.dumps(result,indent=2) if ok else result)
         self.action(lambda:ConnectorDeployer(self.gateway()).inspect(),done)
+
+    def bootstrap_action(self):
+        state=self.gateway_inspection
+        if not state or state.get('state')!='MISSING':
+            messagebox.showerror('Inspect first','Only a confirmed missing gateway can be installed. Click Inspect first.');return
+        if not messagebox.askyesno('Install new gateway',
+            'Install a new PRIVATE ~/aq-mcp gateway on this SSH server?\n\n'
+            'This installs reviewed gateway Python sources and downloads pinned packages using the jump server configured pip index. '
+            'No existing installation will be overwritten. AWS credentials are NOT created.\n\nProceed?'):
+            return
+        self.action(lambda:ConnectorDeployer(self.gateway()).bootstrap(approved=True),
+                    lambda ok,result:self.install_done(ok,result))
+
+    def repair_action(self):
+        state=self.gateway_inspection
+        if not state or state.get('state')!='PERMISSIONS_NEED_REPAIR':
+            messagebox.showerror('Inspect first','Permission repair requires an inspected owned gateway with unsafe core-file modes.');return
+        names=', '.join(x['file'] for x in state['mode_issues'])
+        if not messagebox.askyesno('Change access modes',
+            'Remove group/world WRITE permission from these owned gateway files:\n'+names+'\n\n'
+            'This may affect other users or shared workflows. No unrelated files are changed. Continue?'):
+            return
+        self.action(lambda:ConnectorDeployer(self.gateway()).repair_permissions(state,approved=True),
+                    lambda ok,result:self.install_done(ok,result))
+
+    def install_done(self,ok,result):
+        if not ok:
+            messagebox.showerror('Gateway action failed',str(result));return
+        self.gateway_inspection=None
+        messagebox.showinfo('Gateway action',json.dumps(result,indent=2)[:2000]+'\n\nInspect again before deploying a target.')
+        self.inspect_action()
 
     def discover_action(self):
         sp=self.spec();sp['allow']=['discovery-placeholder']
         def done(ok,result):
-            if not ok:messagebox.showerror('Discovery failed',result);return
-            self.discovered=result['tools'];self.tool_selection=[]
+            if not ok:
+                self.backend_verification=None;self.discovered=[];self.tool_selection=[]
+                messagebox.showerror('Discovery failed',result);return
+            self.backend_verification=result
+            self.prepared=None
+            self.discovered=list(result['tools']);self.tool_selection=list(result.get('existing_allow') or [])
             self.render()
-            messagebox.showinfo('Discovery', '{} tools returned. Select the ones to expose.'.format(len(self.discovered)))
-        self.action(lambda:ConnectorDeployer(self.gateway()).discover(sp),done)
+            messagebox.showinfo('Discovery','{} tools returned. Select exact tools, and review the potential mutators.'.format(len(self.discovered)))
+        self.action(lambda:ConnectorDeployer(self.gateway()).verify_backend(sp),done)
 
     def plan_action(self):
         spec=self.spec()
+        if not self.backend_verification or self.backend_verification.get('backend_identity_sha256')!=backend_identity(spec):
+            self.prepared=None
+            messagebox.showerror('Backend not verified','Return to Step 2 and test the selected backend before generating a plan.');return
         def done(ok,result):
-            if not ok:messagebox.showerror('Plan failed',result);return
+            if not ok:
+                self.prepared=None;self.plan_view.delete('1.0','end');self.plan_view.insert('1.0','Plan failed: '+str(result))
+                messagebox.showerror('Plan failed',str(result));return
+            if result.get('backend_identity_sha256')!=backend_identity(self.spec()):
+                self.prepared=None;messagebox.showerror('Plan stale','The backend fields changed; regenerate the plan.');return
+            result['verification_summary']={'status':'BACKEND_VERIFIED',
+                'handshake':self.backend_verification['handshake'],
+                'offered_tool_count':self.backend_verification['tool_count'],
+                'offered_name_sha256':__import__('hashlib').sha256(','.join(sorted(x['name'] for x in self.backend_verification['tools'])).encode()).hexdigest()}
             self.prepared=result
             self.plan_view.delete('1.0','end');self.plan_view.insert('1.0',json.dumps(result,indent=2))
         self.action(lambda:ConnectorDeployer(self.gateway()).prepare(spec),done)
 
     def deploy_action(self):
-        if not self.prepared:messagebox.showerror('Plan first','Generate a deployment plan first.');return
+        if not self.prepared:messagebox.showerror('Plan first','Wait for the automatically generated deployment plan first.');return
         spec=self.spec();prepared=dict(self.prepared)
+        if prepared.get('backend_identity_sha256')!=backend_identity(spec) or prepared.get('quick_connector')!=quick_connector(spec):
+            messagebox.showerror('Stale plan','Backend/connector settings changed. Refresh the plan before deployment.');return
+        if spec['kind']=='lambda' and (prepared.get('registry_entry') or {}).get('allow')!=sorted(spec.get('allow',[])):
+            messagebox.showerror('Stale tool policy','Tool selection changed. Refresh the plan before deployment.');return
         try:validate_spec(spec)
         except Exception as exc:messagebox.showerror('Validation',str(exc));return
+        risky=prepared.get('potentially_mutating_tools_name_only',[])
+        if risky and not messagebox.askyesno('Review selected tools',
+            'Potentially MUTATING tool names were selected:\n'+', '.join(risky[:14])+
+            '\n\nName heuristics are NOT a safety verdict. Did you inspect each tool and intentionally approve exposing these actions?'):
+            return
+        if prepared.get('warnings') and not messagebox.askyesno('Backend warnings',
+            '\n'.join(prepared['warnings'])+'\n\nConfirm this is the correct endpoint and tool set?'):
+            return
         if not messagebox.askyesno('Approve gateway change',
              'Deploy only {} on the approved jump server?\n\nA registry backup is created; health checks run; Quick registration remains manual.'.format(spec['target'])):
             return
@@ -287,6 +428,8 @@ class Wizard(tk.Tk):
             try:
                 s=self.spec();s['allow']=s.get('allow') or ['discovery-placeholder'];validate_spec(s)
             except Exception as e:messagebox.showerror('Invalid backend',str(e));return
+            if not self.backend_verification or self.backend_verification.get('backend_identity_sha256')!=backend_identity(self.spec()):
+                messagebox.showerror('Backend verification required','Click Test / Verify Backend and wait for a successful MCP tools/list before continuing.');return
         if self.step==2:
             self.save_selection()
             if self.vars['kind'].get()=='lambda' and not self.tool_selection:

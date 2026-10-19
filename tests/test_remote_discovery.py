@@ -3,6 +3,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import remote_agent as remote
 
+@unittest.skipUnless(os.name=='posix','Remote subprocess fixture requires POSIX/Linux')
 class TestDiscovery(unittest.TestCase):
     def test_mcp_session_stays_open_until_tools_reply(self):
         with tempfile.TemporaryDirectory() as d:

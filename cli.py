@@ -18,7 +18,7 @@ def write_new_json(path,data):
 
 def main(argv=None):
     p=argparse.ArgumentParser(description='AQ-MCP Wizard CLI (registered Quick connector still requires manual UI action)')
-    p.add_argument('operation',choices=['inspect','discover','plan','apply','export','rollback'])
+    p.add_argument('operation',choices=['inspect','discover','plan','apply','export','rollback','bootstrap','repair-permissions'])
     p.add_argument('manifest',nargs='?',help='JSON manifest (no secrets)')
     p.add_argument('--known-hosts',default=str(pathlib.Path.home()/'.ssh/known_hosts'))
     p.add_argument('--plan-file')
@@ -27,7 +27,21 @@ def main(argv=None):
     p.add_argument('--approve-target',default='')
     p.add_argument('--host')
     p.add_argument('--user')
+    p.add_argument('--approve-bootstrap',action='store_true',help='Create missing gateway and install pinned dependencies')
+    p.add_argument('--approve-repair',action='store_true',help='Remove group/world write from inspected owned core files')
     args=p.parse_args(argv)
+    if args.operation in ('bootstrap','repair-permissions'):
+        if not args.host or not args.user:
+            p.error('bootstrap/repair requires --host and --user')
+        d=ConnectorDeployer(SSHG(args.host,args.user,args.known_hosts))
+        if args.operation=='bootstrap':
+            if not args.approve_bootstrap:p.error('bootstrap requires --approve-bootstrap')
+            result=d.bootstrap(approved=True)
+        else:
+            if not args.approve_repair:p.error('repair-permissions requires --approve-repair')
+            before=d.inspect()
+            result=d.repair_permissions(before,approved=True)
+        print(json.dumps(result,indent=2));return 0
     if args.operation=='rollback':
         if not args.receipt_file or not args.host or not args.user:
             p.error('rollback requires --receipt-file, --host and --user')

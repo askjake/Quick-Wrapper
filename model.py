@@ -1,5 +1,6 @@
 """Pure input validation and Quick config generation (Python 3.8+)."""
 import json
+import hashlib
 import re
 from urllib.parse import urlsplit
 
@@ -101,9 +102,60 @@ def config_export(spec):
     return json.dumps({'mcpServers': {c['id']: {'command': c['command'], 'args': c['arguments']}}}, indent=2)
 
 
+def backend_identity(spec):
+    """Fingerprints the inputs that bind a verification to a backend selection."""
+    required = ['host','user','kind','target','display_name']
+    extra = ['url'] if spec.get('kind') == 'lambda' else ['server'] if spec.get('kind') == 'local' else []
+    source = {key: spec.get(key, '') for key in required + extra}
+    return hashlib.sha256(json.dumps(source, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
+def risk_tool_names(names):
+    """Advisory name-based classifier, never a proof of read-only behavior."""
+    prefixes = ('create_', 'write_', 'delete_', 'remove_', 'update_', 'set_', 'push_',
+                'merge_', 'approve_', 'submit_', 'trigger_', 'upload_', 'export_',
+                'send_', 'start_', 'run_', 'execute_', 'deploy_', 'publish_')
+    keywords = ('_upload', '_write', '_delete', '_submit', '_export', '_trigger',
+                '_mutate', 'build_log_capsule', 'grasshopper_plan_profile_upload')
+    return sorted(name for name in names if name.lower().startswith(prefixes)
+                  or any(token in name.lower() for token in keywords))
+
+
+def identity_warnings(spec, names):
+    """Heuristic mismatch signal; does not determine backend identity."""
+    label = (spec.get('target', '') + ' ' + spec.get('display_name', '')).lower()
+    n = {name.lower() for name in names}
+    notes=[]
+    if 'epg' in label and len(n & {'count_alerts','alert_time_series','export_receivers_csv',
+                                    'submit_receivers_export','alert_geo_map'}) >= 2:
+        notes.append('Possible backend mismatch: this connector is labeled EPG but the endpoint offers RTR Alerts tools. Verify the Lambda URL before approval.')
+    if ('rtr' in label or 'alert' in label) and len(n & {'list_programs','get_genres','genre_distribution','top_programs'}) >= 2:
+        notes.append('Possible backend mismatch: this connector is labeled Alerts but the endpoint offers EPG tools.')
+    return notes
+
+
 def plan(spec, current_sha):
     entry = make_registry_entry(spec) if spec['kind']=='lambda' else None
-    return {'version': 1, 'mode':'plan-only', 'target':spec['target'],
-            'kind':spec['kind'], 'expected_registry_sha256':current_sha,
-            'registry_entry':entry, 'quick_connector':quick_connector(spec),
+    chosen = entry['allow'] if entry else []
+    risks = risk_tool_names(chosen)
+    steps = (['1. Verify the selected backend and review tool discovery.',
+              '2. Compare the live registry SHA-256 to this plan.',
+              '3. Back up targets.json without changing other targets.',
+              '4. Create exactly one new target with the chosen allow-list.',
+              '5. Run MCP initialize/tools/list through the installed target.',
+              '6. If health verification fails, attempt checksum-bound rollback.']
+             if spec['kind']=='lambda' else
+             ['1. Verify the existing launcher and complete an MCP tools/list handshake.',
+              '2. Leave Git/local gateway configuration unchanged.'])
+    steps += ['7. Register the generated Local SSH connector manually in Amazon Quick.',
+              '8. Start a new Quick chat and verify a harmless read.']
+    return {'version': 2, 'mode':'plan-only', 'target':spec['target'],
+            'kind':spec['kind'], 'backend_identity_sha256':backend_identity(spec),
+            'expected_registry_sha256':current_sha,
+            'registry_entry':entry, 'tool_count_to_expose':len(chosen) if entry else 'existing policy',
+            'potentially_mutating_tools_name_only':risks,
+            'warnings':identity_warnings(spec, chosen) +
+                       (['Name-based mutator detection is advisory; inspect ALL selected tools and schemas.'] if risks else []),
+            'execution_plan':steps,
+            'quick_connector':quick_connector(spec),
             'registration':'MANUAL_REQUIRED', 'no_secrets_in_manifest':True}

@@ -16,7 +16,7 @@ if (git status --porcelain) { throw 'Uncommitted changes: review or commit befor
 
 git fetch origin feature/native-local-gateway-v04-20261019
 if ($LASTEXITCODE -ne 0) { throw 'Git fetch failed' }
-git switch -C feature/native-local-gateway-v04-20261019 --track origin/feature/native-local-gateway-v04-20261019
+git switch --track origin/feature/native-local-gateway-v04-20261019
 if ($LASTEXITCODE -ne 0) { throw 'Git branch switch failed' }
 
 if (-not (Test-Path .\.venv\Scripts\python.exe)) {
@@ -30,7 +30,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Unit tests failed; do not deploy' }
 & .\.venv\Scripts\python.exe wizard.py
 ```
 
-For a first-time clone, `git clone https://github.com/askjake/Quick-Wrapper.git "$HOME\Quick-Wrapper"`, then run the block above. After this branch is merged, switch to `main` and `git pull --ff-only origin main` instead of tracking the feature branch.
+If the feature branch is already checked out locally, skip the `git switch --track` line and use `git switch feature/native-local-gateway-v04-20261019` followed by `git pull --ff-only origin feature/native-local-gateway-v04-20261019`; do not reset local branch changes. For a first-time clone, `git clone https://github.com/askjake/Quick-Wrapper.git "$HOME\Quick-Wrapper"`, then run the block above. After this branch is merged, switch to `main` and `git pull --ff-only origin main` instead of tracking the feature branch.
 
 ## v0.4 workflow — no SSH server needed
 

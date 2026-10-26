@@ -15,7 +15,7 @@ Two target kinds are supported:
       in LOCAL_SERVERS, so a registry edit can never point a target at an arbitrary program.
       Local targets must not define "url", are never signed, and make no network calls.
 """
-import json, os, re, sys
+import json, os, re, sys, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 REG = os.environ.get("AQ_REGISTRY", os.path.join(HERE, "targets.json"))
 STDIO = os.environ.get("AQ_STDIO_SCRIPT", os.path.join(HERE, "aq_mcp_stdio.py"))
@@ -50,7 +50,8 @@ def _remote_env(name, t):
             "AQ_TOOL_ALLOWLIST": ",".join(t.get("allow") or []),
             "AQ_EXTRA_HEADERS": json.dumps(t.get("headers") or {}),
             "AQ_FORCED_ARGS": json.dumps(t.get("forced_args") or {}),
-            "AQ_SECRET_ARGS": json.dumps(t.get("secret_args") or {})}   # always set -> inherited env can't leak in
+            "AQ_SECRET_ARGS": json.dumps(t.get("secret_args") or {}),
+            "AQ_LOG_FILE": os.path.join(HERE, "aq-mcp.log")}   # always set -> inherited env can't leak in
 
 def _local_env(name, t):
     server = t.get("server")
@@ -96,6 +97,10 @@ def target_script(name):
 def main(argv):
     if len(argv) >= 2 and argv[0] == "run":
         env = {**os.environ, **target_env(argv[1])}
+        if os.name == 'nt':
+            # Windows lacks Unix exec replacement semantics; retain the stdio
+            # pipe and exit with the child MCP server's status.
+            raise SystemExit(subprocess.call([sys.executable, target_script(argv[1])], env=env))
         os.execve(sys.executable, [sys.executable, target_script(argv[1])], env)
     elif argv[:1] == ["list"]:
         for n, t in sorted(load()["targets"].items()):

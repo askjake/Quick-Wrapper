@@ -66,7 +66,7 @@ def check(name):
     if tools is not None:
         return name, "OK", f"{len(tools)} tools", dt
     tail = " ".join("".join(err).split())[-300:]
-    hint = next((h for k, h in HINTS if k.lower() in tail.lower()), "see ~/aq-mcp/aq-mcp.log")
+    hint = next((h for k, h in HINTS if k.lower() in tail.lower()), "see the gateway aq-mcp.log")
     return name, "FAIL", hint, dt
 
 def main(names):

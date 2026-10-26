@@ -50,6 +50,14 @@ def validate_lambda_url(url):
 
 
 def validate_spec(spec):
+    transport=spec.get('transport', 'linux-ssh')
+    if transport not in ('linux-ssh','native-local'):
+        raise ValidationError('Unsupported gateway transport (Windows remote SSH requires an approved SSH server).')
+    if transport=='native-local':
+        if spec.get('host') not in ('127.0.0.1','localhost'):
+            raise ValidationError('Native-local gateway may only target this computer')
+        if spec.get('kind')!='lambda':
+            raise ValidationError('Native-local v0.4 supports Lambda targets; Git and existing local require Linux SSH')
     validate_gateway(spec.get('host', ''), spec.get('user', ''))
     name = spec.get('target', '')
     if not TARGET_RE.fullmatch(name):
@@ -83,6 +91,17 @@ def make_registry_entry(spec):
 
 def quick_connector(spec):
     validate_spec(spec)
+    if spec.get('transport')=='native-local':
+        from native_gateway import native_root, local_python
+        root=native_root()
+        runner=local_python(root)
+        if any(char.isspace() for char in str(root)):
+            raise ValidationError('Local gateway directory includes spaces; Quick argument parsing must be independently verified')
+        return {'id': 'aq-' + spec['target'],
+                'name': spec.get('display_name') or 'AQ '+spec['target'],
+                'connection_type':'Local', 'command': str(runner),
+                'arguments': [str(root/'aq_registry.py'),'run',spec['target']],
+                'timeout_seconds':120, 'environment_variables': {}}
     root = '/home/{}/aq-mcp'.format(spec['user'])
     name = spec['target']
     if spec['kind'] == 'git':
@@ -104,7 +123,7 @@ def config_export(spec):
 
 def backend_identity(spec):
     """Fingerprints the inputs that bind a verification to a backend selection."""
-    required = ['host','user','kind','target','display_name']
+    required = ['transport','host','user','kind','target','display_name']
     extra = ['url'] if spec.get('kind') == 'lambda' else ['server'] if spec.get('kind') == 'local' else []
     source = {key: spec.get(key, '') for key in required + extra}
     return hashlib.sha256(json.dumps(source, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()

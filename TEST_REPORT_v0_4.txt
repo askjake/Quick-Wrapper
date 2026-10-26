@@ -1,0 +1,1 @@
+AQ-MCP Connector Wizard v0.4 Linux/Xvfb: Ran 53 tests; OK. Native Windows execution remains unverified.

@@ -43,6 +43,31 @@ def register_quick_automatically(*args, **kwargs):
     raise RegistrationUnsupported('No supported Quick connector registration interface verified. Use guided manual entry.')
 
 
+def quick_copy_fields(connector):
+    """Format a validated wizard connector for direct manual Quick GUI entry.
+
+    This is a display/export helper only; it never registers a connector in Quick.
+    Both SSH and native-local connectors use a single space-separated Arguments
+    field in the observed Quick UI. Paths containing spaces require separate
+    validation before use (native-local model rejects such paths).
+    """
+    if not isinstance(connector, dict):
+        raise ValueError('Quick connector configuration is missing')
+    command = connector.get('command')
+    arguments = connector.get('arguments')
+    if not isinstance(command, str) or not command.strip():
+        raise ValueError('Missing Quick connector command')
+    if not isinstance(arguments, list) or not arguments or any(
+            not isinstance(arg, str) or not arg.strip() or any(ch in arg for ch in ('\n', '\r', '\x00'))
+            for arg in arguments):
+        raise ValueError('Invalid Quick connector arguments')
+    if any(any(ch.isspace() for ch in arg) for arg in arguments):
+        raise ValueError('Quick Arguments include spaces within an argument; validate UI parsing before copying')
+    return {'command': command, 'arguments': ' '.join(arguments),
+            'id': connector.get('id', ''), 'name': connector.get('name', ''),
+            'timeout_seconds': connector.get('timeout_seconds', 120)}
+
+
 def quick_instructions(spec):
     """Human-executable setup steps grounded in observed Quick Edit MCP UI.
 
@@ -61,7 +86,7 @@ def quick_instructions(spec):
             "   Connection type : Local\n"
             "   ID              : {id}\n"
             "   Name            : {name}\n"
-            "   Command         : ssh\n"
+            "   Command         : {command}\n"
             "   Arguments       : {args}\n"
             "   Environment variables : EMPTY — never enter AWS credentials/PATs.\n"
             "   Timeout (seconds)     : {timeout} (adjust for the tool family)\n\n"
@@ -83,5 +108,5 @@ def quick_instructions(spec):
             "inside Quick. Exported JSON is a reference example, NOT a verified\n"
             "import format. Capture the test result and mark registration verified\n"
             "only after a real Quick chat call succeeds.\n").format(
-                id=cfg['id'],name=cfg['name'],args=args,
+                id=cfg['id'],name=cfg['name'],command=cfg['command'],args=args,
                 timeout=cfg['timeout_seconds'],count=len(cfg['arguments']),chips=chips)

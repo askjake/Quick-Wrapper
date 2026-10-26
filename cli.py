@@ -4,6 +4,7 @@ import json
 import pathlib
 import sys
 from deploy_lib import SSHGateway, ConnectorDeployer
+from native_gateway import NativeGateway
 from model import validate_spec, quick_connector
 from quick_reg import write_quick_config, quick_instructions
 
@@ -21,6 +22,7 @@ def main(argv=None):
     p.add_argument('operation',choices=['inspect','discover','plan','apply','export','rollback','bootstrap','repair-permissions'])
     p.add_argument('manifest',nargs='?',help='JSON manifest (no secrets)')
     p.add_argument('--known-hosts',default=str(pathlib.Path.home()/'.ssh/known_hosts'))
+    p.add_argument('--native-local',action='store_true',help='Use/create user-owned gateway on this computer without SSH')
     p.add_argument('--plan-file')
     p.add_argument('--receipt-file')
     p.add_argument('--output-file')
@@ -31,24 +33,25 @@ def main(argv=None):
     p.add_argument('--approve-repair',action='store_true',help='Remove group/world write from inspected owned core files')
     args=p.parse_args(argv)
     if args.operation in ('bootstrap','repair-permissions'):
-        if not args.host or not args.user:
-            p.error('bootstrap/repair requires --host and --user')
-        d=ConnectorDeployer(SSHG(args.host,args.user,args.known_hosts))
+        if not args.native_local and (not args.host or not args.user):
+            p.error('remote bootstrap/repair requires --host and --user')
+        d=ConnectorDeployer(NativeGateway() if args.native_local else SSHG(args.host,args.user,args.known_hosts))
         if args.operation=='bootstrap':
             if not args.approve_bootstrap:p.error('bootstrap requires --approve-bootstrap')
             result=d.bootstrap(approved=True)
         else:
+            if args.native_local:p.error('permission repair is Linux SSH only')
             if not args.approve_repair:p.error('repair-permissions requires --approve-repair')
             before=d.inspect()
             result=d.repair_permissions(before,approved=True)
         print(json.dumps(result,indent=2));return 0
     if args.operation=='rollback':
-        if not args.receipt_file or not args.host or not args.user:
-            p.error('rollback requires --receipt-file, --host and --user')
+        if not args.receipt_file or (not args.native_local and (not args.host or not args.user)):
+            p.error('rollback requires --receipt-file and for SSH --host and --user')
         receipt=read_json(args.receipt_file)
         if args.approve_target != receipt.get('target'):
             p.error('--approve-target must match the rollback receipt target')
-        result=ConnectorDeployer(SSHG(args.host,args.user,args.known_hosts)).rollback(receipt)
+        result=ConnectorDeployer(NativeGateway() if args.native_local else SSHG(args.host,args.user,args.known_hosts)).rollback(receipt)
         print(json.dumps(result,indent=2));return 0
     if not args.manifest:p.error('manifest required')
     spec=read_json(args.manifest);validate_spec(spec)
@@ -56,7 +59,9 @@ def main(argv=None):
         if not args.output_file:p.error('export requires --output-file')
         write_quick_config(spec,args.output_file)
         print(quick_instructions(spec));return 0
-    d=ConnectorDeployer(SSHG(spec['host'],spec['user'],args.known_hosts))
+    if bool(args.native_local)!=(spec.get('transport')=='native-local'):
+        p.error('Transport mismatch: --native-local must match manifest transport=native-local')
+    d=ConnectorDeployer(NativeGateway() if args.native_local else SSHG(spec['host'],spec['user'],args.known_hosts))
     if args.operation=='inspect': result=d.inspect()
     elif args.operation=='discover': result=d.discover(spec)
     elif args.operation=='plan':

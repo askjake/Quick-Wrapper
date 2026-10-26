@@ -1,4 +1,4 @@
-"""AQ-MCP Connector Wizard v0.3, local Windows desktop UI (tkinter).
+"""AQ-MCP Connector Wizard v0.4, local desktop UI (tkinter).
 No web listener, no Quick database mutations, no saved PATs or passwords.
 """
 import json
@@ -8,9 +8,10 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 from deploy_lib import SSHGateway, ConnectorDeployer, DeploymentError
+from native_gateway import NativeGateway
 from model import (validate_gateway, validate_spec, ValidationError, quick_connector,
                    config_export, backend_identity, risk_tool_names)
-from quick_reg import quick_instructions, write_quick_config, inspect_dips_read_only
+from quick_reg import quick_instructions, write_quick_config, inspect_dips_read_only, quick_copy_fields
 
 BG='#101826'
 PANEL='#1B2738'
@@ -21,7 +22,7 @@ ACCENT='#56C5E6'
 class Wizard(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('AQ-MCP Connector Wizard  •  v0.3')
+        self.title('AQ-MCP Connector Wizard  •  v0.4')
         self.geometry('970x710')
         self.minsize(760,620)
         self.configure(bg=BG)
@@ -46,10 +47,11 @@ class Wizard(tk.Tk):
         self.vars={
             'host':tk.StringVar(), 'user':tk.StringVar(),
             'known_hosts':tk.StringVar(value=os.path.expanduser('~/.ssh/known_hosts')),
+            'transport':tk.StringVar(value='linux-ssh'),
             'kind':tk.StringVar(value='lambda'), 'target':tk.StringVar(value='epg-demo'),
             'display_name':tk.StringVar(value='AQ EPG Demo'),
             'url':tk.StringVar(), 'server':tk.StringVar(value='aq_build_artifacts_mcp.py')}
-        self.screens=['SSH Gateway','Backend','Tool policy','Review & deploy','Quick registration']
+        self.screens=['Gateway','Backend','Tool policy','Review & deploy','Quick registration']
         self.heading=ttk.Frame(self,padding=(24,18));self.heading.pack(fill='x')
         ttk.Label(self.heading,text='AQ-MCP  /  CONNECTOR WIZARD',style='Muted.TLabel').pack(anchor='w')
         ttk.Label(self.heading,text='Build a verified MCP connector',style='Heading.TLabel').pack(anchor='w',pady=(6,0))
@@ -99,24 +101,36 @@ class Wizard(tk.Tk):
         else:self.render_quick()
 
     def render_gateway(self):
-        ttk.Label(self.body,text='01  Trusted SSH jump server',style='Heading.TLabel').pack(anchor='w')
-        self.helper(self.body,'Strict SSH host-key verification. Inspect first: a missing gateway can be installed; an existing group-writable gateway can be reviewed and repaired with explicit approval. No existing runtime is overwritten.')
-        self.field(self.body,'Jump server hostname / IP','host')
-        self.field(self.body,'Remote SSH username','user')
-        self.field(self.body,'Local known_hosts path','known_hosts')
+        ttk.Label(self.body,text='01  Select gateway location',style='Heading.TLabel').pack(anchor='w')
+        self.helper(self.body,'Use native localhost on Windows with NO SSH server or admin rights, or keep your existing Linux SSH jump server. Native localhost does not open an inbound port.')
+        selector=ttk.Frame(self.body);selector.pack(anchor='w',pady=6)
+        for label,value in [('Linux SSH jump server (existing v0.3 workflow)','linux-ssh'),
+                            ('Native gateway on THIS computer (no SSH/admin)','native-local')]:
+            ttk.Radiobutton(selector,text=label,value=value,variable=self.vars['transport'],
+                            command=self.transport_changed).pack(anchor='w')
+        if self.vars['transport'].get()=='linux-ssh':
+            self.helper(self.body,'Strict SSH host-key verification; Linux gateway bootstrap only. 127.0.0.1 is valid if your own computer runs Linux SSH.')
+            self.field(self.body,'Jump server hostname / IP','host')
+            self.field(self.body,'Remote SSH username','user')
+            self.field(self.body,'Local known_hosts path','known_hosts')
+        else:
+            self.helper(self.body,'Native gateway folder: ~/AQ-MCP-Gateway. Runs under your current Windows account and uses its own venv. Linux/macOS native-local is experimental. No WSL2, Docker, SSH daemon or admin rights required for Lambda targets.')
         buttons=ttk.Frame(self.body);buttons.pack(anchor='w',pady=(16,4))
         ttk.Button(buttons,text='Inspect gateway (read only)',command=self.inspect_action).pack(side='left',padx=(0,8))
         ttk.Button(buttons,text='Install missing gateway',command=self.bootstrap_action).pack(side='left',padx=(0,8))
-        ttk.Button(buttons,text='Repair core permissions',command=self.repair_action).pack(side='left')
-        self.helper(self.body,'Fresh install: creates ~/aq-mcp privately and installs reviewed pinned dependencies using the jump server package index. No AWS credentials, PATs, Docker images, or Quick records are installed. Existing install: permission repair removes group/world write on owned core files only (may affect shared workflows).')
+        if self.vars['transport'].get()=='linux-ssh':
+            ttk.Button(buttons,text='Repair core permissions',command=self.repair_action).pack(side='left')
+        self.helper(self.body,'Fresh install is create-only and needs approved Python package downloads. AWS credentials are configured separately; no PATs or Quick database writes. Existing installations are never overwritten.')
         self.gateway_result=self.text_area(self.body,9)
         self.gateway_result.insert('1.0','Click Inspect. A missing gateway can be installed only with approval; core permission repair is separate.')
 
     def render_backend(self):
         ttk.Label(self.body,text='02  Select MCP backend',style='Heading.TLabel').pack(anchor='w')
-        self.helper(self.body,'Choose the preapproved gateway path. Only new Lambda registry entries can be deployed in v0.2.')
+        self.helper(self.body,'Choose the approved backend. Native-local v0.4 supports SigV4 Lambda; Git and existing local servers remain Linux SSH-only.')
         group=ttk.Frame(self.body);group.pack(fill='x',pady=8)
-        for label,value in [('AWS Lambda Function URL (SigV4)','lambda'),('Guarded Git MCP (existing)','git'),('Local approved MCP (existing)','local')]:
+        modes=[('AWS Lambda Function URL (SigV4)','lambda')]
+        if self.vars['transport'].get()=='linux-ssh':modes += [('Guarded Git MCP (existing)','git'),('Local approved MCP (existing)','local')]
+        for label,value in modes:
             ttk.Radiobutton(group,text=label,value=value,variable=self.vars['kind'],command=self.kind_changed).pack(anchor='w',pady=4)
         self.field(self.body,'Registry / Git target name','target')
         self.field(self.body,'Quick connector display name','display_name')
@@ -179,6 +193,17 @@ class Wizard(tk.Tk):
                                 'Review warnings and choose the allowed tools next.'.format(result['tool_count']))
         self.action(lambda:ConnectorDeployer(self.gateway()).verify_backend(spec),done)
 
+
+    def transport_changed(self):
+        self.gateway_inspection=None
+        self.backend_verification=None
+        self.prepared=None
+        self.discovered=[]
+        self.tool_selection=[]
+        if self.vars['transport'].get()=='native-local':
+            self.vars['kind'].set('lambda')
+        self.render()
+
     def kind_changed(self):
         self.prepared=None
         self.backend_verification=None
@@ -193,7 +218,7 @@ class Wizard(tk.Tk):
         if self.vars['kind'].get()!='lambda':
             self.helper(self.body,'This backend is already registered on the gateway. Its existing Git guard / local tool policy is not modified.')
             return
-        self.helper(self.body,'Discover tools through the 3090 (MCP initialize + tools/list only). Check exact tools to expose. An empty list is prohibited because the current proxy treats empty as ALL.')
+        self.helper(self.body,'Discover tools through the chosen gateway (MCP initialize + tools/list only). Check exact tools to expose. An empty list is prohibited because the current proxy treats empty as ALL.')
         ttk.Button(self.body,text='Re-test / refresh backend tool list',command=self.discover_action).pack(anchor='w',pady=6)
         self.helper(self.body,'WARNING: Tool names and descriptions are not safety guarantees. An EPG label with Alerts/export tools may indicate the wrong Lambda URL.')
         self.tool_box=tk.Listbox(self.body,selectmode='multiple',height=12,exportselection=False,
@@ -207,6 +232,33 @@ class Wizard(tk.Tk):
         if self.backend_verification:
             for warning in self.backend_verification.get('warnings',[]):self.helper(self.body,'WARNING: '+warning)
 
+    def show_quick_copy_fields(self, parent, connector):
+        """Expose Quick Command and Arguments separately, with copy buttons."""
+        for child in parent.winfo_children():
+            child.destroy()
+        if not connector:
+            ttk.Label(parent, text='Quick Command / Arguments appear here after plan generation.',
+                      style='Muted.TLabel').pack(anchor='w')
+            return
+        try:
+            values=quick_copy_fields(connector)
+        except ValueError as exc:
+            ttk.Label(parent, text='Cannot format Quick settings: '+str(exc),
+                      style='Muted.TLabel').pack(anchor='w')
+            return
+        ttk.Label(parent, text='COPY INTO AMAZON QUICK (Local connector)',
+                  style='Muted.TLabel').pack(anchor='w', pady=(3,4))
+        for label,key in [('Command','command'),('Arguments (paste entire line)','arguments')]:
+            ttk.Label(parent,text=label).pack(anchor='w',pady=(5,2))
+            row=ttk.Frame(parent);row.pack(fill='x')
+            field=ttk.Entry(row)
+            field.insert(0,values[key]);field.configure(state='readonly')
+            field.pack(side='left',fill='x',expand=True)
+            ttk.Button(row,text='Copy '+('command' if key=='command' else 'arguments'),
+                       command=lambda value=values[key]:self.copy_text(value)).pack(side='left',padx=(8,0))
+        self.helper(parent,'Quick ID: {}  |  Name: {}  |  Timeout: {} s  |  Environment: EMPTY'.format(
+                    values['id'],values['name'],values['timeout_seconds']))
+
     def render_review(self):
         ttk.Label(self.body,text='04  Plan, deploy and verify',style='Heading.TLabel').pack(anchor='w')
         self.helper(self.body,'The verified backend and selected tools produce a plan automatically. The live registry is checked before approval; Apply is locked until planning finishes.')
@@ -215,6 +267,8 @@ class Wizard(tk.Tk):
         ttk.Button(controls,text='Deploy approved plan',command=self.deploy_action).pack(side='left',padx=(0,10))
         ttk.Button(controls,text='Rollback last deployment',command=self.rollback_action).pack(side='left',padx=(0,10))
         ttk.Button(controls,text='Save receipt',command=self.save_receipt_action).pack(side='left')
+        self.quick_copy_area=ttk.Frame(self.body);self.quick_copy_area.pack(fill='x',pady=(6,10))
+        self.show_quick_copy_fields(self.quick_copy_area, (self.prepared or {}).get('quick_connector'))
         self.plan_view=self.text_area(self.body,16)
         if self.prepared:self.plan_view.insert('1.0',json.dumps(self.prepared,indent=2))
         else:self.plan_view.insert('1.0','Generating a deployment plan automatically from verified backend and selected tools...')
@@ -222,9 +276,12 @@ class Wizard(tk.Tk):
 
     def render_quick(self):
         ttk.Label(self.body,text='05  Register in Amazon Quick',style='Heading.TLabel').pack(anchor='w')
-        self.helper(self.body,'Gateway deployment and Quick Desktop registration are separate steps. This version NEVER writes to the DIPS database; its schema and supported registration lifecycle are unverified.')
+        self.helper(self.body,'Gateway deployment and Quick Desktop registration are separate steps. Native-local uses direct Python (no SSH); Linux SSH uses ssh. This version NEVER writes to DIPS.')
         try:msg=quick_instructions(self.spec())
         except Exception as e:msg='Complete prior steps: '+str(e)
+        self.quick_copy_area=ttk.Frame(self.body);self.quick_copy_area.pack(fill='x',pady=(5,10))
+        try:self.show_quick_copy_fields(self.quick_copy_area,quick_connector(self.spec()))
+        except Exception:self.show_quick_copy_fields(self.quick_copy_area,None)
         self.manual=self.text_area(self.body,12)
         self.manual.insert('1.0',msg)
         controls=ttk.Frame(self.body);controls.pack(fill='x',pady=12)
@@ -243,6 +300,9 @@ class Wizard(tk.Tk):
 
     def spec(self):
         spec={k:v.get().strip() for k,v in self.vars.items() if k!='known_hosts'}
+        if spec['transport']=='native-local':
+            spec['host']='127.0.0.1'
+            spec['user']='local'
         if spec['kind']=='lambda':
             if hasattr(self,'tool_box') and self.tool_box.winfo_exists():
                 spec['allow']=[self.discovered[int(i)]['name'] for i in self.tool_box.curselection()]
@@ -259,6 +319,7 @@ class Wizard(tk.Tk):
     def gateway(self):
         spec=self.spec()
         validate_gateway(spec['host'],spec['user'])
+        if spec.get('transport')=='native-local':return NativeGateway()
         return SSHGateway(spec['host'],spec['user'],self.vars['known_hosts'].get().strip())
 
     def action(self,task,callback=None):
@@ -290,8 +351,9 @@ class Wizard(tk.Tk):
         state=self.gateway_inspection
         if not state or state.get('state')!='MISSING':
             messagebox.showerror('Inspect first','Only a confirmed missing gateway can be installed. Click Inspect first.');return
+        location=('a new user-owned ~/AQ-MCP-Gateway on THIS computer' if self.vars['transport'].get()=='native-local' else 'a new PRIVATE ~/aq-mcp gateway on this Linux SSH server')
         if not messagebox.askyesno('Install new gateway',
-            'Install a new PRIVATE ~/aq-mcp gateway on this SSH server?\n\n'
+            'Install '+location+'?\n\n'
             'This installs reviewed gateway Python sources and downloads pinned packages using the jump server configured pip index. '
             'No existing installation will be overwritten. AWS credentials are NOT created.\n\nProceed?'):
             return
@@ -346,6 +408,7 @@ class Wizard(tk.Tk):
                 'offered_tool_count':self.backend_verification['tool_count'],
                 'offered_name_sha256':__import__('hashlib').sha256(','.join(sorted(x['name'] for x in self.backend_verification['tools'])).encode()).hexdigest()}
             self.prepared=result
+            self.show_quick_copy_fields(self.quick_copy_area,result.get('quick_connector'))
             self.plan_view.delete('1.0','end');self.plan_view.insert('1.0',json.dumps(result,indent=2))
         self.action(lambda:ConnectorDeployer(self.gateway()).prepare(spec),done)
 
@@ -367,18 +430,22 @@ class Wizard(tk.Tk):
             '\n'.join(prepared['warnings'])+'\n\nConfirm this is the correct endpoint and tool set?'):
             return
         if not messagebox.askyesno('Approve gateway change',
-             'Deploy only {} on the approved jump server?\n\nA registry backup is created; health checks run; Quick registration remains manual.'.format(spec['target'])):
+             'Deploy only {} on the selected gateway?\n\nA registry backup is created; health checks run; Quick registration remains manual.'.format(spec['target'])):
             return
         gw=self.gateway()
         def done(ok,result):
             if not ok:messagebox.showerror('Deployment failed',result);return
             self.last_receipt=result;self.last_gateway=gw
-            self.plan_view.delete('1.0','end');self.plan_view.insert('1.0',json.dumps(result,indent=2))
-            messagebox.showinfo('Gateway result',result['status']+'\nQuick registration remains manual.')
+            connector=result.get('quick_connector') or prepared.get('quick_connector')
+            self.show_quick_copy_fields(self.quick_copy_area,connector)
+            fields=quick_copy_fields(connector)
+            paste='QUICK COMMAND (COPY/PASTE):\n'+fields['command']+'\n\nQUICK ARGUMENTS (PASTE ENTIRE LINE):\n'+fields['arguments']+'\n\n'
+            self.plan_view.delete('1.0','end');self.plan_view.insert('1.0',paste+json.dumps(result,indent=2))
+            messagebox.showinfo('Gateway result',result['status']+'\n\nQuick Command and Arguments are available above the receipt, with separate Copy buttons.\nQuick registration remains manual.')
         self.action(lambda:ConnectorDeployer(gw).deploy(spec,prepared,True),done)
 
     def save_receipt_action(self):
-        if not self.last_receipt or not self.last_receipt.get('backup_name'):
+        if not self.last_receipt or not (self.last_receipt.get('backup_name') or self.last_receipt.get('backup_file')):
             messagebox.showerror('No deployment receipt','Deploy a new Lambda target before saving a receipt.');return
         path=filedialog.asksaveasfilename(title='Save private rollback receipt',
                                           defaultextension='.json',filetypes=[('JSON','*.json')])
@@ -390,7 +457,7 @@ class Wizard(tk.Tk):
         except Exception as e:messagebox.showerror('Could not save receipt',str(e))
 
     def rollback_action(self):
-        if not self.last_receipt or not self.last_receipt.get('backup_name'):
+        if not self.last_receipt or not (self.last_receipt.get('backup_name') or self.last_receipt.get('backup_file')):
             messagebox.showerror('No rollback receipt','Only newly installed Lambda entries can be rolled back.');return
         if not messagebox.askyesno('Confirm rollback','Restore only if the registry SHA has NOT changed since deployment?'):
             return
@@ -422,7 +489,9 @@ class Wizard(tk.Tk):
     def go_next(self):
         if self.step==4:messagebox.showinfo('Finish','Complete registration manually in Quick and verify a safe tool call.');return
         if self.step==0:
-            try:validate_gateway(self.vars['host'].get().strip(),self.vars['user'].get().strip())
+            try:
+                g=self.spec()
+                validate_gateway(g['host'],g['user'])
             except Exception as e:messagebox.showerror('Invalid gateway',str(e));return
         if self.step==1:
             try:
